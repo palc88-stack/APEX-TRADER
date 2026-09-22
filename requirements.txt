@@ -6,9 +6,11 @@
 ccxt==4.2.25
 
 # HTTP & WebSocket
+# Keep httpx below 0.26: python-telegram-bot 20.6 requires this range,
+# and 0.25.2 is compatible with supabase 2.3.0.
 aiohttp==3.9.1
 requests==2.31.0
-httpx==0.24.1
+httpx==0.25.2
 
 # Technical Analysis
 pandas==2.1.4
@@ -19,7 +21,6 @@ supabase==2.3.0
 redis==5.0.1
 
 # Telegram
-# 20.6 متوافق مع httpx==0.24.1
 python-telegram-bot==20.6
 
 # Security
