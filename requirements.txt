@@ -8,8 +8,6 @@ ccxt==4.2.25
 # HTTP & WebSocket
 aiohttp==3.9.1
 requests==2.31.0
-# Compatible with supabase==2.3.0 and python-telegram-bot==20.7
-httpx==0.24.1
 
 # Technical Analysis
 pandas==2.1.4
