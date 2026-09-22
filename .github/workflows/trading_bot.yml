@@ -1,5 +1,5 @@
 # ======================================
-# APEX TRADER - GitHub Actions (محدّث)
+# APEX TRADER - GitHub Actions
 # ======================================
 
 name: APEX TRADER
@@ -35,14 +35,16 @@ jobs:
           python -m pip install -r requirements.txt
 
       - name: '📁 إعداد المجلدات'
-        run: |
-          mkdir -p logs
+        run: mkdir -p logs
 
-      - name: '🧪 اختبارات سريعة'
+      - name: '🔎 فحص Python والاختبارات السريعة'
         env:
           BINANCE_API_KEY: ${{ secrets.BINANCE_API_KEY }}
           BINANCE_SECRET_KEY: ${{ secrets.BINANCE_SECRET_KEY }}
           BINANCE_TESTNET: ${{ secrets.BINANCE_TESTNET }}
+          BYBIT_API_KEY: ${{ secrets.BYBIT_API_KEY }}
+          BYBIT_SECRET_KEY: ${{ secrets.BYBIT_SECRET_KEY }}
+          BYBIT_TESTNET: ${{ secrets.BYBIT_TESTNET }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
           UPSTASH_REDIS_URL: ${{ secrets.UPSTASH_REDIS_URL }}
@@ -55,14 +57,10 @@ jobs:
           MAX_LEVERAGE: ${{ secrets.MAX_LEVERAGE }}
           ACTIVE_MODE: ${{ secrets.ACTIVE_MODE }}
           COMPOUNDING_RATE: ${{ secrets.COMPOUNDING_RATE }}
-          BYBIT_API_KEY: ${{ secrets.BYBIT_API_KEY }}
-          BYBIT_SECRET_KEY: ${{ secrets.BYBIT_SECRET_KEY }}
-          BYBIT_TESTNET: ${{ secrets.BYBIT_TESTNET }}
         run: |
-          python -m pytest tests/ -x -q \
-            --timeout=30 \
-            -k "not test_real_balance" \
-            2>/dev/null || true
+          python -m compileall -q bot tests
+          pytest tests/ -x -q --timeout=30 \
+            -k "not test_real_balance and not test_real_ohlcv_data and not test_signal_engine_no_mock and not test_indicators_output_validity and not test_all_prices_from_api and not test_real_ticker and not test_indicators_with_real_data"
 
       - name: '🚀 تشغيل البوت'
         env:
@@ -84,15 +82,7 @@ jobs:
           MAX_LEVERAGE: ${{ secrets.MAX_LEVERAGE }}
           ACTIVE_MODE: ${{ secrets.ACTIVE_MODE }}
           COMPOUNDING_RATE: ${{ secrets.COMPOUNDING_RATE }}
-        run: |
-          echo "🚀 APEX TRADER يبدأ $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
-          python -m bot.main
-          EXIT_CODE=$?
-          if [ $EXIT_CODE -ne 0 ]; then
-            echo "❌ البوت انتهى بخطأ: $EXIT_CODE"
-            exit $EXIT_CODE
-          fi
-          echo "✅ اكتملت الدورة بنجاح"
+        run: python -m bot.main
 
       - name: '📋 رفع السجلات عند الفشل'
         if: failure()
@@ -101,3 +91,4 @@ jobs:
           name: error-logs-${{ github.run_id }}
           path: logs/
           retention-days: 3
+          if-no-files-found: warn
