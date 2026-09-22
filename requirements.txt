@@ -1,0 +1,31 @@
+# ======================================
+# APEX TRADER - Dependencies
+# ======================================
+
+# Exchange APIs
+ccxt==4.2.25
+
+# HTTP & WebSocket
+aiohttp==3.9.1
+requests==2.31.0
+
+# Technical Analysis
+pandas==2.1.4
+numpy==1.26.2
+pandas-ta==0.3.14b
+
+# Database
+supabase==2.3.0
+redis==5.0.1
+
+# Telegram
+python-telegram-bot==20.7
+
+# Security
+python-dotenv==1.0.0
+cryptography==41.0.7
+
+# Utilities
+loguru==0.7.2
+pydantic==2.5.3
+schedule==1.2.1
