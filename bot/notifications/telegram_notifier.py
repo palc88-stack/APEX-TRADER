@@ -1,134 +1,203 @@
 # ======================================
 # APEX TRADER - Telegram Notifier
 # ======================================
-# نظام الإشعارات عبر Telegram
-# آمن ومُنسَّق احترافياً
+# إشعارات Telegram الكاملة
+# رسائل منسقة وآمنة
 
 import asyncio
 from typing import Optional
+from datetime import datetime, timezone
 from loguru import logger
 import aiohttp
 
 from bot.config import config
-from bot.core.position_manager import Position, PositionStatus
+from bot.core.position_manager import Position
 
 
 class TelegramNotifier:
     """
     مُرسِل إشعارات Telegram الاحترافي
-    
-    يُرسل إشعارات منسقة عن:
-    - الصفقات المفتوحة والمغلقة
-    - التحذيرات والطوارئ
-    - التقارير اليومية
+
+    جميع الرسائل:
+    - منسقة بـ HTML
+    - لا تحتوي بيانات حساسة
+    - موجزة وواضحة
     """
-    
-    BASE_URL = "https://api.telegram.org/bot{token}/sendMessage"
-    
+
+    API_URL = (
+        "https://api.telegram.org/bot{token}/sendMessage"
+    )
+    MAX_RETRIES = 3
+    RETRY_DELAY = 2  # ثانيتان
+
     def __init__(self):
         self.token = config.telegram.bot_token
         self.chat_id = config.telegram.chat_id
-        self._enabled = config.telegram.validate()
-        
+        self._enabled = bool(
+            self.token and self.chat_id
+        )
+
         if self._enabled:
-            logger.info("✅ Telegram Notifier جاهز")
+            logger.info("✅ Telegram جاهز للإشعارات")
         else:
-            logger.warning("⚠️ Telegram غير مُضبوط - الإشعارات معطّلة")
-    
+            logger.warning(
+                "⚠️ Telegram غير مضبوط - "
+                "الإشعارات معطّلة"
+            )
+
     async def send(
-        self, 
+        self,
         message: str,
         parse_mode: str = "HTML"
     ) -> bool:
         """
-        إرسال رسالة لـ Telegram
-        
+        إرسال رسالة مع إعادة المحاولة
+
         Args:
-            message: نص الرسالة (HTML)
-            parse_mode: نوع التنسيق
-            
+            message: نص الرسالة
+            parse_mode: HTML أو Markdown
+
         Returns:
             bool: نجح الإرسال؟
         """
         if not self._enabled:
-            logger.debug(f"📤 [محاكاة] {message[:50]}...")
+            # في وضع التطوير نطبع فقط
+            logger.debug(
+                f"📤 [Telegram محاكاة]: "
+                f"{message[:80]}..."
+            )
             return True
-        
-        url = self.BASE_URL.format(token=self.token)
-        
+
+        url = self.API_URL.format(token=self.token)
         payload = {
             "chat_id": self.chat_id,
             "text": message,
             "parse_mode": parse_mode,
             "disable_web_page_preview": True
         }
-        
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    url, 
-                    json=payload,
-                    timeout=aiohttp.ClientTimeout(total=10)
-                ) as response:
-                    if response.status == 200:
-                        return True
-                    else:
-                        error = await response.text()
+
+        for attempt in range(1, self.MAX_RETRIES + 1):
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.post(
+                        url,
+                        json=payload,
+                        timeout=aiohttp.ClientTimeout(
+                            total=10
+                        )
+                    ) as response:
+                        if response.status == 200:
+                            return True
+
+                        # معالجة Rate Limit
+                        if response.status == 429:
+                            retry_after = int(
+                                response.headers.get(
+                                    'Retry-After', 5
+                                )
+                            )
+                            logger.warning(
+                                f"⏳ Rate limit - "
+                                f"انتظار {retry_after}s"
+                            )
+                            await asyncio.sleep(retry_after)
+                            continue
+
+                        error_text = await response.text()
                         logger.error(
-                            f"❌ Telegram خطأ {response.status}: {error}"
+                            f"❌ Telegram خطأ "
+                            f"{response.status}: "
+                            f"{error_text[:100]}"
                         )
                         return False
-                        
-        except asyncio.TimeoutError:
-            logger.warning("⚠️ Telegram timeout")
-            return False
-        except Exception as e:
-            logger.error(f"❌ Telegram خطأ: {e}")
-            return False
-    
+
+            except asyncio.TimeoutError:
+                logger.warning(
+                    f"⚠️ Telegram timeout "
+                    f"(محاولة {attempt}/{self.MAX_RETRIES})"
+                )
+                if attempt < self.MAX_RETRIES:
+                    await asyncio.sleep(self.RETRY_DELAY)
+
+            except aiohttp.ClientError as e:
+                logger.error(f"❌ Telegram network: {e}")
+                if attempt < self.MAX_RETRIES:
+                    await asyncio.sleep(self.RETRY_DELAY)
+
+            except Exception as e:
+                logger.error(
+                    f"❌ Telegram خطأ غير متوقع: {e}"
+                )
+                return False
+
+        return False
+
     async def send_trade_opened(
         self,
         position: Position,
-        signal = None
+        signal=None
     ) -> None:
-        """إشعار فتح صفقة"""
-        direction_emoji = "🟢⬆️" if position.direction.value == "LONG" else "🔴⬇️"
-        mode_emoji = {
+        """إشعار فتح صفقة جديدة"""
+        direction_icon = (
+            "🟢⬆️"
+            if position.direction.value == "LONG"
+            else "🔴⬇️"
+        )
+
+        mode_icons = {
             "SNIPER": "🎯",
             "HUNTER": "🏹",
             "FARMER": "🌾",
             "EXPLOSION": "💥"
         }
-        
-        mode = signal.mode.value if signal else "UNKNOWN"
-        confidence = signal.confidence if signal else 0
-        
-        message = f"""
-⬡ <b>APEX TRADER</b>
 
-{mode_emoji.get(mode, '📊')} <b>{mode} - صفقة جديدة</b>
+        mode = (
+            signal.mode.value if signal else "UNKNOWN"
+        )
+        mode_icon = mode_icons.get(mode, "📊")
+        confidence = signal.confidence if signal else 0.0
+        is_explosion = (
+            signal.is_explosion if signal else False
+        )
 
-{direction_emoji} <b>{position.symbol}</b> {position.direction.value}
+        explosion_line = (
+            "\n💥 <b>انفجار سعري مكتشف!</b>"
+            if is_explosion else ""
+        )
 
-📊 <b>تفاصيل الصفقة:</b>
-├ الدخول: <code>${position.entry_price:,.4f}</code>
-├ حجم: <code>${position.size_usd:.2f}</code>
-├ رافعة: <code>{position.leverage}x</code>
-└ قيمة: <code>${position.position_value:.2f}</code>
+        message = (
+            f"⬡ <b>APEX TRADER</b>\n\n"
+            f"{mode_icon} <b>{mode} - صفقة جديدة</b>"
+            f"{explosion_line}\n\n"
+            f"{direction_icon} <b>{position.symbol}</b> "
+            f"{position.direction.value}\n\n"
+            f"📊 <b>تفاصيل:</b>\n"
+            f"├ سعر الدخول: "
+            f"<code>${position.entry_price:,.4f}</code>\n"
+            f"├ الهامش: "
+            f"<code>${position.size_usd:.2f}</code>\n"
+            f"├ الرافعة: "
+            f"<code>{position.leverage}x</code>\n"
+            f"└ القيمة: "
+            f"<code>${position.position_value:.2f}</code>\n\n"
+            f"🎯 <b>الأهداف:</b>\n"
+            f"├ وقف الخسارة: "
+            f"<code>${position.stop_loss:,.4f}</code>\n"
+            f"├ الهدف 1: "
+            f"<code>${position.take_profit_1:,.4f}</code>\n"
+            f"└ الهدف 2: "
+            f"<code>${position.take_profit_2:,.4f}</code>\n\n"
+            f"💸 عمولات: "
+            f"<code>${(position.entry_fee + position.exit_fee):.4f}</code>\n"
+            f"🎯 الثقة: <code>{confidence:.1%}</code>\n"
+            f"🏦 المنصة: <code>{position.exchange.upper()}</code>\n"
+            f"🕐 <code>"
+            f"{datetime.now(timezone.utc).strftime('%H:%M:%S')} UTC"
+            f"</code>"
+        )
 
-🎯 <b>الأهداف:</b>
-├ وقف خسارة: <code>${position.stop_loss:,.4f}</code>
-├ هدف 1: <code>${position.take_profit_1:,.4f}</code>
-└ هدف 2: <code>${position.take_profit_2:,.4f}</code>
-
-💸 <b>العمولات:</b>
-└ إجمالي: <code>${(position.entry_fee + position.exit_fee):.4f}</code>
-
-🎯 ثقة: <code>{confidence:.1%}</code>
-🏦 منصة: <code>{position.exchange.upper()}</code>
-"""
         await self.send(message)
-    
+
     async def send_trade_closed(
         self,
         position: Position,
@@ -136,31 +205,33 @@ class TelegramNotifier:
     ) -> None:
         """إشعار إغلاق صفقة"""
         is_profit = position.pnl >= 0
-        result_emoji = "✅" if is_profit else "❌"
-        
-        reason_map = {
+        result_icon = "✅" if is_profit else "❌"
+
+        reason_labels = {
             "tp1": "🎯 الهدف الأول",
             "tp2": "🎯🎯 الهدف الثاني",
             "stop_loss": "🛡️ وقف الخسارة",
             "trailing_stop": "🔄 Trailing Stop",
-            "manual": "👤 يدوي"
+            "manual": "👤 إغلاق يدوي"
         }
-        
-        message = f"""
-⬡ <b>APEX TRADER</b>
 
-{result_emoji} <b>صفقة مغلقة</b>
+        close_reason = reason_labels.get(reason, reason)
 
-📊 <b>{position.symbol}</b> {position.direction.value}
-└ السبب: {reason_map.get(reason, reason)}
+        message = (
+            f"⬡ <b>APEX TRADER</b>\n\n"
+            f"{result_icon} <b>صفقة مغلقة</b>\n\n"
+            f"📊 <b>{position.symbol}</b> "
+            f"{position.direction.value}\n"
+            f"└ السبب: {close_reason}\n\n"
+            f"💰 <b>النتيجة:</b>\n"
+            f"├ P&L: <code>${position.pnl:+.4f}</code>\n"
+            f"├ النسبة: <code>{position.pnl_pct:+.2f}%</code>\n"
+            f"└ المدة: "
+            f"<code>{position.duration_minutes:.1f} دقيقة</code>"
+        )
 
-💰 <b>النتيجة:</b>
-├ P&L: <code>${position.pnl:+.4f}</code>
-├ نسبة: <code>{position.pnl_pct:+.2f}%</code>
-└ المدة: <code>{position.duration_minutes:.1f} دقيقة</code>
-"""
         await self.send(message)
-    
+
     async def send_partial_close(
         self,
         position: Position,
@@ -168,89 +239,135 @@ class TelegramNotifier:
         percentage: int,
         partial_pnl: float
     ) -> None:
-        """إشعار إغلاق جزئي"""
-        message = f"""
-⬡ <b>APEX TRADER</b>
+        """إشعار إغلاق جزئي عند TP1"""
+        message = (
+            f"⬡ <b>APEX TRADER</b>\n\n"
+            f"🎯 <b>إغلاق جزئي - TP1</b>\n\n"
+            f"📊 <b>{position.symbol}</b>\n"
+            f"├ السعر: <code>${price:,.4f}</code>\n"
+            f"├ المُغلَق: <code>{percentage}%</code>\n"
+            f"└ ربح جزئي: <code>${partial_pnl:+.4f}</code>\n\n"
+            f"🔄 <i>Trailing يحمي الباقي...</i>"
+        )
 
-🎯 <b>إغلاق جزئي - TP1</b>
-
-📊 <b>{position.symbol}</b>
-├ السعر: <code>${price:,.4f}</code>
-├ المُغلَق: <code>{percentage}%</code>
-└ ربح جزئي: <code>${partial_pnl:+.4f}</code>
-
-🔄 الـ Trailing يحمي الباقي...
-"""
         await self.send(message)
-    
-    async def send_daily_limit_reached(
-        self, 
-        loss_pct: float
-    ) -> None:
-        """إشعار الوصول لحد الخسارة"""
-        message = f"""
-⬡ <b>APEX TRADER</b>
 
-🚨 <b>تحذير - حد الخسارة اليومية</b>
-
-تم الوصول لحد الخسارة اليومية:
-└ الخسارة: <code>{loss_pct:.1f}%</code>
-
-⏸️ البوت متوقف حتى الغد
-💤 يعود للعمل في 00:00 UTC
-"""
-        await self.send(message)
-    
     async def send_daily_report(
         self,
         stats: dict,
         balance: float
     ) -> None:
-        """التقرير اليومي"""
-        win_rate = stats.get('win_rate', 0)
-        win_emoji = "🟢" if win_rate >= 60 else "🟡" if win_rate >= 50 else "🔴"
-        
-        message = f"""
-⬡ <b>APEX TRADER - تقرير يومي</b>
-📅 {stats.get('date', 'اليوم')}
+        """التقرير اليومي الكامل"""
+        win_rate = float(stats.get("win_rate", 0))
+        net_pnl = float(stats.get("net_pnl", 0))
+        total_trades = int(stats.get("total_trades", 0))
+        winning = int(stats.get("winning_trades", 0))
+        losing = int(stats.get("losing_trades", 0))
+        total_fees = float(stats.get("total_fees", 0))
 
-💰 <b>المالية:</b>
-├ الرصيد: <code>${balance:.2f}</code>
-├ ربح/خسارة: <code>${stats.get('net_pnl', 0):+.2f}</code>
-└ نسبة: <code>{stats.get('pnl_pct', 0):+.2f}%</code>
+        # تحديد إيموجي النتيجة
+        if win_rate >= 65:
+            performance_icon = "🟢 ممتاز"
+        elif win_rate >= 55:
+            performance_icon = "🟡 جيد"
+        else:
+            performance_icon = "🔴 يحتاج مراجعة"
 
-📊 <b>الصفقات:</b>
-├ الإجمالي: <code>{stats.get('total_trades', 0)}</code>
-├ رابحة: <code>{stats.get('winning_trades', 0)} ✅</code>
-├ خاسرة: <code>{stats.get('losing_trades', 0)} ❌</code>
-└ Win Rate: {win_emoji} <code>{win_rate:.1f}%</code>
+        pnl_icon = "📈" if net_pnl >= 0 else "📉"
 
-💸 رسوم: <code>${stats.get('total_fees', 0):.4f}</code>
-💰 صافي: <code>${stats.get('net_pnl', 0):+.4f}</code>
-"""
+        message = (
+            f"⬡ <b>APEX TRADER - تقرير يومي</b>\n"
+            f"📅 {stats.get('date', date.today().isoformat())}\n\n"
+            f"💰 <b>المالية:</b>\n"
+            f"├ الرصيد: <code>${balance:.2f}</code>\n"
+            f"├ {pnl_icon} صافي اليوم: "
+            f"<code>${net_pnl:+.4f}</code>\n"
+            f"└ الرسوم: <code>${total_fees:.4f}</code>\n\n"
+            f"📊 <b>الصفقات:</b>\n"
+            f"├ الإجمالي: <code>{total_trades}</code>\n"
+            f"├ رابحة ✅: <code>{winning}</code>\n"
+            f"├ خاسرة ❌: <code>{losing}</code>\n"
+            f"└ Win Rate: <code>{win_rate:.1f}%</code>\n\n"
+            f"🏆 الأداء: {performance_icon}"
+        )
+
         await self.send(message)
-    
+
+    async def send_daily_limit_reached(
+        self,
+        loss_pct: float
+    ) -> None:
+        """إشعار الوصول لحد الخسارة اليومية"""
+        message = (
+            f"⬡ <b>APEX TRADER</b>\n\n"
+            f"🚨 <b>حد الخسارة اليومية!</b>\n\n"
+            f"الخسارة: <code>{loss_pct:.1f}%</code>\n\n"
+            f"⏸️ البوت متوقف حتى الغد\n"
+            f"💤 يعود في 00:00 UTC"
+        )
+
+        await self.send(message)
+
     async def send_error(self, error_msg: str) -> None:
-        """إشعار خطأ"""
-        message = f"""
-⬡ <b>APEX TRADER</b>
+        """إشعار خطأ في النظام"""
+        # لا نرسل رسائل خطأ طويلة
+        short_error = error_msg[:150].replace(
+            '<', '&lt;'
+        ).replace('>', '&gt;')
 
-⚠️ <b>تنبيه - خطأ في النظام</b>
+        message = (
+            f"⬡ <b>APEX TRADER</b>\n\n"
+            f"⚠️ <b>تنبيه نظام</b>\n\n"
+            f"<code>{short_error}</code>\n\n"
+            f"🔄 إعادة المحاولة في الدورة القادمة"
+        )
 
-<code>{error_msg[:200]}</code>
-
-🔄 سيتم المحاولة في الدورة القادمة
-"""
         await self.send(message)
-    
+
     async def send_connection_error(self) -> None:
-        """إشعار انقطاع الاتصال"""
-        message = """
-⬡ <b>APEX TRADER</b>
+        """إشعار انقطاع الاتصال بالمنصة"""
+        message = (
+            f"⬡ <b>APEX TRADER</b>\n\n"
+            f"🔴 <b>انقطاع الاتصال!</b>\n\n"
+            f"الصفقات محمية بـ SL على المنصة\n"
+            f"🔄 إعادة المحاولة تلقائياً..."
+        )
 
-🔴 <b>انقطاع الاتصال بالمنصة!</b>
+        await self.send(message)
 
-جميع الأوامر المعلقة محمية بـ SL على المنصة
-سيتم إعادة الاتصال في الدورة القادمة
-"""
+    async def send_startup(
+        self,
+        balance: float,
+        mode: str
+    ) -> None:
+        """إشعار بدء تشغيل البوت"""
+        message = (
+            f"⬡ <b>APEX TRADER</b>\n\n"
+            f"🚀 <b>البوت يعمل!</b>\n\n"
+            f"💰 الرصيد: <code>${balance:.2f}</code>\n"
+            f"⚡ الوضع: <code>{mode}</code>\n"
+            f"🕐 <code>"
+            f"{datetime.now(timezone.utc).strftime('%H:%M:%S')} UTC"
+            f"</code>"
+        )
+
+        await self.send(message)
+
+    async def send_weekly_summary(
+        self,
+        stats: dict
+    ) -> None:
+        """ملخص أسبوعي"""
+        message = (
+            f"⬡ <b>APEX TRADER - ملخص أسبوعي</b>\n\n"
+            f"📊 الصفقات: "
+            f"<code>{stats.get('total_trades', 0)}</code>\n"
+            f"✅ رابحة: "
+            f"<code>{stats.get('winning_trades', 0)}</code>\n"
+            f"💰 صافي: "
+            f"<code>${stats.get('total_pnl', 0):+.2f}</code>\n"
+            f"🎯 Win Rate: "
+            f"<code>{stats.get('win_rate', 0):.1f}%</code>"
+        )
+
         await self.send(message)
