@@ -8,6 +8,7 @@ ccxt==4.2.25
 # HTTP & WebSocket
 aiohttp==3.9.1
 requests==2.31.0
+httpx==0.24.1
 
 # Technical Analysis
 pandas==2.1.4
@@ -18,7 +19,8 @@ supabase==2.3.0
 redis==5.0.1
 
 # Telegram
-python-telegram-bot==20.7
+# 20.6 متوافق مع httpx==0.24.1
+python-telegram-bot==20.6
 
 # Security
 python-dotenv==1.0.0
