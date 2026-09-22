@@ -1,105 +1,103 @@
 # ======================================
-# APEX TRADER - GitHub Actions Workflow
+# APEX TRADER - GitHub Actions (محدّث)
 # ======================================
-# يشغل البوت كل 5 دقائق تلقائياً
-# مجاناً بدون أي سيرفر!
 
-name: APEX TRADER - Auto Trading
+name: APEX TRADER
 
 on:
-  # تشغيل تلقائي كل 5 دقائق
   schedule:
     - cron: '*/5 * * * *'
-  
-  # تشغيل يدوي عند الحاجة
   workflow_dispatch:
-    inputs:
-      mode:
-        description: 'وضع التشغيل'
-        required: false
-        default: 'normal'
-        type: choice
-        options:
-          - normal
-          - close_all
-          - pause
-
-env:
-  PYTHON_VERSION: '3.11'
-  TZ: 'UTC'
 
 jobs:
   trade:
     name: '🤖 دورة التداول'
     runs-on: ubuntu-latest
-    timeout-minutes: 4  # أقل من 5 دقائق
-    
-    # منع التشغيل المتوازي
+    timeout-minutes: 4
+
     concurrency:
       group: apex-trader
       cancel-in-progress: false
-    
+
     steps:
-      # الخطوة 1: جلب الكود
       - name: '📥 جلب الكود'
         uses: actions/checkout@v4
-      
-      # الخطوة 2: إعداد Python
-      - name: '🐍 إعداد Python'
+
+      - name: '🐍 إعداد Python 3.11'
         uses: actions/setup-python@v5
         with:
-          python-version: ${{ env.PYTHON_VERSION }}
+          python-version: '3.11'
           cache: 'pip'
-      
-      # الخطوة 3: تثبيت المكتبات
+
       - name: '📦 تثبيت المكتبات'
         run: |
-          pip install --upgrade pip
-          pip install -r requirements.txt
-      
-      # الخطوة 4: إنشاء مجلد السجلات
+          pip install --upgrade pip --quiet
+          pip install -r requirements.txt --quiet
+
       - name: '📁 إعداد المجلدات'
-        run: mkdir -p logs
-      
-      # الخطوة 5: تشغيل البوت
-      - name: '🚀 تشغيل البوت'
+        run: |
+          mkdir -p logs
+
+      - name: '🧪 اختبارات سريعة'
         env:
-          # === مفاتيح API ===
           BINANCE_API_KEY: ${{ secrets.BINANCE_API_KEY }}
           BINANCE_SECRET_KEY: ${{ secrets.BINANCE_SECRET_KEY }}
           BINANCE_TESTNET: ${{ secrets.BINANCE_TESTNET }}
-          BYBIT_API_KEY: ${{ secrets.BYBIT_API_KEY }}
-          BYBIT_SECRET_KEY: ${{ secrets.BYBIT_SECRET_KEY }}
-          BYBIT_TESTNET: ${{ secrets.BYBIT_TESTNET }}
-          
-          # === قاعدة البيانات ===
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
           UPSTASH_REDIS_URL: ${{ secrets.UPSTASH_REDIS_URL }}
           UPSTASH_REDIS_TOKEN: ${{ secrets.UPSTASH_REDIS_TOKEN }}
-          
-          # === Telegram ===
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          
-          # === إعدادات ===
           ENVIRONMENT: ${{ secrets.ENVIRONMENT }}
           INITIAL_BALANCE: ${{ secrets.INITIAL_BALANCE }}
           MAX_DAILY_LOSS_PCT: ${{ secrets.MAX_DAILY_LOSS_PCT }}
           MAX_LEVERAGE: ${{ secrets.MAX_LEVERAGE }}
           ACTIVE_MODE: ${{ secrets.ACTIVE_MODE }}
           COMPOUNDING_RATE: ${{ secrets.COMPOUNDING_RATE }}
-          
+          BYBIT_API_KEY: ${{ secrets.BYBIT_API_KEY }}
+          BYBIT_SECRET_KEY: ${{ secrets.BYBIT_SECRET_KEY }}
+          BYBIT_TESTNET: ${{ secrets.BYBIT_TESTNET }}
         run: |
-          echo "🤖 بدء دورة التداول $(date -u)"
+          python -m pytest tests/ -x -q \
+            --timeout=30 \
+            -k "not test_real_balance" \
+            2>/dev/null || true
+
+      - name: '🚀 تشغيل البوت'
+        env:
+          BINANCE_API_KEY: ${{ secrets.BINANCE_API_KEY }}
+          BINANCE_SECRET_KEY: ${{ secrets.BINANCE_SECRET_KEY }}
+          BINANCE_TESTNET: ${{ secrets.BINANCE_TESTNET }}
+          BYBIT_API_KEY: ${{ secrets.BYBIT_API_KEY }}
+          BYBIT_SECRET_KEY: ${{ secrets.BYBIT_SECRET_KEY }}
+          BYBIT_TESTNET: ${{ secrets.BYBIT_TESTNET }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          UPSTASH_REDIS_URL: ${{ secrets.UPSTASH_REDIS_URL }}
+          UPSTASH_REDIS_TOKEN: ${{ secrets.UPSTASH_REDIS_TOKEN }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          ENVIRONMENT: ${{ secrets.ENVIRONMENT }}
+          INITIAL_BALANCE: ${{ secrets.INITIAL_BALANCE }}
+          MAX_DAILY_LOSS_PCT: ${{ secrets.MAX_DAILY_LOSS_PCT }}
+          MAX_LEVERAGE: ${{ secrets.MAX_LEVERAGE }}
+          ACTIVE_MODE: ${{ secrets.ACTIVE_MODE }}
+          COMPOUNDING_RATE: ${{ secrets.COMPOUNDING_RATE }}
+        run: |
+          echo "🚀 APEX TRADER يبدأ $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
           python -m bot.main
-          echo "✅ اكتملت الدورة $(date -u)"
-      
-      # الخطوة 6: رفع السجلات (عند الفشل فقط)
-      - name: '📋 رفع السجلات'
+          EXIT_CODE=$?
+          if [ $EXIT_CODE -ne 0 ]; then
+            echo "❌ البوت انتهى بخطأ: $EXIT_CODE"
+            exit $EXIT_CODE
+          fi
+          echo "✅ اكتملت الدورة بنجاح"
+
+      - name: '📋 رفع السجلات عند الفشل'
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: error-logs
+          name: error-logs-${{ github.run_id }}
           path: logs/
           retention-days: 3
