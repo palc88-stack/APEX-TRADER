@@ -4,7 +4,7 @@
 
 import os
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import List
 
 from dotenv import load_dotenv
 
@@ -35,11 +35,7 @@ class ExchangeConfig:
         )
 
     def validate(self) -> bool:
-        # التحقق من وجود المفاتيح على الأقل لواحد من المنصات
-        return bool(
-            self.binance_api_key
-            or self.bybit_api_key
-        )
+        return bool(self.binance_api_key or self.bybit_api_key)
 
 
 @dataclass
@@ -151,6 +147,7 @@ class AppConfig:
         return (
             self.exchange.validate()
             and self.database.validate()
+            and self.telegram.validate()
         )
 
     def reload(self) -> None:
