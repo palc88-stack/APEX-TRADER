@@ -1,221 +1,164 @@
 # ======================================
-# APEX TRADER - Configuration Manager
+# APEX TRADER - Configuration
 # ======================================
-# المسؤول عن إدارة جميع إعدادات البوت
-# بطريقة آمنة ومنظمة
 
 import os
 from dataclasses import dataclass, field
 from typing import List, Optional
-from dotenv import load_dotenv
-from loguru import logger
 
-# تحميل متغيرات البيئة
+from dotenv import load_dotenv
+
 load_dotenv()
 
 
 @dataclass
 class ExchangeConfig:
-    """إعدادات منصات التداول"""
-    
-    # Binance
     binance_api_key: str = ""
     binance_secret_key: str = ""
-    binance_testnet: bool = True
-    
-    # Bybit
+    binance_testnet: bool = False
+
     bybit_api_key: str = ""
     bybit_secret_key: str = ""
-    bybit_testnet: bool = True
-    
+    bybit_testnet: bool = False
+
     def __post_init__(self):
-        """تحميل المفاتيح من متغيرات البيئة"""
-        self.binance_api_key = os.getenv("BINANCE_API_KEY", "")
-        self.binance_secret_key = os.getenv("BINANCE_SECRET_KEY", "")
-        self.binance_testnet = os.getenv(
-            "BINANCE_TESTNET", "true"
-        ).lower() == "true"
-        
-        self.bybit_api_key = os.getenv("BYBIT_API_KEY", "")
-        self.bybit_secret_key = os.getenv("BYBIT_SECRET_KEY", "")
-        self.bybit_testnet = os.getenv(
-            "BYBIT_TESTNET", "true"
-        ).lower() == "true"
-    
+        self.binance_api_key = os.getenv("BINANCE_API_KEY", self.binance_api_key)
+        self.binance_secret_key = os.getenv("BINANCE_SECRET_KEY", self.binance_secret_key)
+        self.binance_testnet = (
+            os.getenv("BINANCE_TESTNET", "false").strip().lower() in {"1", "true", "yes"}
+        )
+
+        self.bybit_api_key = os.getenv("BYBIT_API_KEY", self.bybit_api_key)
+        self.bybit_secret_key = os.getenv("BYBIT_SECRET_KEY", self.bybit_secret_key)
+        self.bybit_testnet = (
+            os.getenv("BYBIT_TESTNET", "false").strip().lower() in {"1", "true", "yes"}
+        )
+
     def validate(self) -> bool:
-        """التحقق من صحة الإعدادات"""
-        if not self.binance_api_key or not self.binance_secret_key:
-            logger.error("❌ Binance API keys مفقودة!")
-            return False
-        return True
+        # التحقق من وجود المفاتيح على الأقل لواحد من المنصات
+        return bool(
+            self.binance_api_key
+            or self.bybit_api_key
+        )
+
+
+@dataclass
+class DatabaseConfig:
+    supabase_url: str = ""
+    supabase_key: str = ""
+    redis_url: str = ""
+    redis_token: str = ""
+
+    def __post_init__(self):
+        self.supabase_url = os.getenv("SUPABASE_URL", self.supabase_url)
+        self.supabase_key = os.getenv("SUPABASE_KEY", self.supabase_key)
+        self.redis_url = os.getenv("UPSTASH_REDIS_URL", self.redis_url)
+        self.redis_token = os.getenv("UPSTASH_REDIS_TOKEN", self.redis_token)
+
+    def validate(self) -> bool:
+        return bool(self.supabase_url and self.supabase_key) or bool(self.redis_url)
+
+
+@dataclass
+class TelegramConfig:
+    bot_token: str = ""
+    chat_id: str = ""
+
+    def __post_init__(self):
+        self.bot_token = os.getenv("TELEGRAM_BOT_TOKEN", self.bot_token)
+        self.chat_id = os.getenv("TELEGRAM_CHAT_ID", self.chat_id)
+
+    def validate(self) -> bool:
+        return bool(self.bot_token and self.chat_id)
 
 
 @dataclass
 class RiskConfig:
-    """إعدادات إدارة المخاطر"""
-    
-    # حدود المخاطر
-    max_daily_loss_pct: float = 4.0      # أقصى خسارة يومية %
-    max_leverage: int = 20               # أقصى رافعة مالية
-    max_position_pct: float = 20.0       # أقصى حجم صفقة %
-    
-    # إعدادات الصفقة
-    default_sl_pct: float = 0.25        # وقف خسارة افتراضي %
-    tp1_pct: float = 0.41              # هدف ربح 1 %
-    tp2_pct: float = 0.71              # هدف ربح 2 %
-    
-    # Trailing Stop
-    trailing_activation_pct: float = 0.15  # تفعيل Trailing %
-    breakeven_pct: float = 0.15            # نقطة التعادل %
-    
-    # العمولات
-    binance_maker_fee: float = 0.0002   # 0.02%
-    binance_taker_fee: float = 0.0004   # 0.04%
-    bybit_maker_fee: float = 0.0002     # 0.02%
-    bybit_taker_fee: float = 0.00055    # 0.055%
-    
-    # Compounding
-    compounding_rate: float = 0.70      # 70% إعادة استثمار
-    
+    max_daily_loss_pct: float = 4.0
+    max_leverage: int = 10
+    default_sl_pct: float = 0.5
+    tp1_pct: float = 1.2
+    tp2_pct: float = 2.5
+    compounding_rate: float = 0.1
+    max_position_pct: float = 20.0
+
     def __post_init__(self):
-        """تحميل من متغيرات البيئة"""
         self.max_daily_loss_pct = float(
-            os.getenv("MAX_DAILY_LOSS_PCT", "4.0")
+            os.getenv("MAX_DAILY_LOSS_PCT", str(self.max_daily_loss_pct))
         )
-        self.max_leverage = int(
-            os.getenv("MAX_LEVERAGE", "20")
+        self.max_leverage = int(os.getenv("MAX_LEVERAGE", str(self.max_leverage)))
+        self.default_sl_pct = float(
+            os.getenv("DEFAULT_SL_PCT", str(self.default_sl_pct))
         )
+        self.tp1_pct = float(os.getenv("TP1_PCT", str(self.tp1_pct)))
+        self.tp2_pct = float(os.getenv("TP2_PCT", str(self.tp2_pct)))
         self.compounding_rate = float(
-            os.getenv("COMPOUNDING_RATE", "0.70")
+            os.getenv("COMPOUNDING_RATE", str(self.compounding_rate))
+        )
+        self.max_position_pct = float(
+            os.getenv("MAX_POSITION_PCT", str(self.max_position_pct))
         )
 
 
 @dataclass
 class TradingConfig:
-    """إعدادات التداول"""
-    
-    # العملات المدعومة
-    symbols: List[str] = field(default_factory=lambda: [
-        "BTC/USDT",
-        "ETH/USDT", 
-        "SOL/USDT",
-        "XRP/USDT",
-        "BNB/USDT"
-    ])
-    
-    # الأوضاع
-    active_mode: str = "HUNTER"         # SNIPER/HUNTER/FARMER
-    
-    # الإطارات الزمنية
-    timeframe: str = "5m"               # الإطار الأساسي
-    higher_timeframe: str = "1h"        # الإطار الأعلى
-    
-    # حدود الإشارة
-    min_confidence_sniper: float = 0.90
-    min_confidence_hunter: float = 0.70
+    symbols: List[str] = field(
+        default_factory=lambda: ["BTC/USDT", "ETH/USDT", "SOL/USDT"]
+    )
+    timeframe: str = "5m"
+    min_confidence_sniper: float = 0.75
+    min_confidence_hunter: float = 0.60
     min_confidence_farmer: float = 0.55
-    
-    # الليفريج حسب الوضع
-    leverage_sniper: int = 15
-    leverage_hunter: int = 10
-    leverage_farmer: int = 7
-    
-    def __post_init__(self):
-        self.active_mode = os.getenv("ACTIVE_MODE", "HUNTER")
+    leverage_sniper: int = 8
+    leverage_hunter: int = 5
+    leverage_farmer: int = 3
 
-
-@dataclass 
-class DatabaseConfig:
-    """إعدادات قاعدة البيانات"""
-    
-    supabase_url: str = ""
-    supabase_key: str = ""
-    redis_url: str = ""
-    redis_token: str = ""
-    
     def __post_init__(self):
-        self.supabase_url = os.getenv("SUPABASE_URL", "")
-        self.supabase_key = os.getenv("SUPABASE_KEY", "")
-        self.redis_url = os.getenv("UPSTASH_REDIS_URL", "")
-        self.redis_token = os.getenv("UPSTASH_REDIS_TOKEN", "")
-    
-    def validate(self) -> bool:
-        """التحقق من صحة الإعدادات"""
-        if not self.supabase_url or not self.supabase_key:
-            logger.warning("⚠️ Supabase غير مضبوط - التداول بدون DB")
-            return False
-        return True
+        symbols_env = os.getenv("TRADING_SYMBOLS", "")
+        if symbols_env:
+            self.symbols = [s.strip() for s in symbols_env.split(",") if s.strip()]
+
+        self.timeframe = os.getenv("TRADING_TIMEFRAME", self.timeframe)
+        self.min_confidence_sniper = float(
+            os.getenv("MIN_CONFIDENCE_SNIPER", str(self.min_confidence_sniper))
+        )
+        self.min_confidence_hunter = float(
+            os.getenv("MIN_CONFIDENCE_HUNTER", str(self.min_confidence_hunter))
+        )
+        self.min_confidence_farmer = float(
+            os.getenv("MIN_CONFIDENCE_FARMER", str(self.min_confidence_farmer))
+        )
+        self.leverage_sniper = int(
+            os.getenv("LEVERAGE_SNIPER", str(self.leverage_sniper))
+        )
+        self.leverage_hunter = int(
+            os.getenv("LEVERAGE_HUNTER", str(self.leverage_hunter))
+        )
+        self.leverage_farmer = int(
+            os.getenv("LEVERAGE_FARMER", str(self.leverage_farmer))
+        )
 
 
 @dataclass
-class TelegramConfig:
-    """إعدادات Telegram"""
-    
-    bot_token: str = ""
-    chat_id: str = ""
-    
-    def __post_init__(self):
-        self.bot_token = os.getenv("TELEGRAM_BOT_TOKEN", "")
-        self.chat_id = os.getenv("TELEGRAM_CHAT_ID", "")
-    
-    def validate(self) -> bool:
-        if not self.bot_token or not self.chat_id:
-            logger.warning("⚠️ Telegram غير مضبوط")
-            return False
-        return True
+class AppConfig:
+    exchange: ExchangeConfig = field(default_factory=ExchangeConfig)
+    database: DatabaseConfig = field(default_factory=DatabaseConfig)
+    telegram: TelegramConfig = field(default_factory=TelegramConfig)
+    risk: RiskConfig = field(default_factory=RiskConfig)
+    trading: TradingConfig = field(default_factory=TradingConfig)
 
+    def validate_all(self) -> bool:
+        return (
+            self.exchange.validate()
+            and self.database.validate()
+        )
 
-class Config:
-    """الإعداد المركزي للبوت"""
-    
-    _instance: Optional['Config'] = None
-    
-    def __new__(cls) -> 'Config':
-        """Singleton Pattern - نسخة واحدة فقط"""
-        if cls._instance is None:
-            cls._instance = super().__new__(cls)
-        return cls._instance
-    
-    def __init__(self):
-        if hasattr(self, '_initialized'):
-            return
-            
+    def reload(self) -> None:
         self.exchange = ExchangeConfig()
-        self.risk = RiskConfig()
-        self.trading = TradingConfig()
         self.database = DatabaseConfig()
         self.telegram = TelegramConfig()
-        
-        # بيئة التشغيل
-        self.environment = os.getenv("ENVIRONMENT", "testnet")
-        self.initial_balance = float(
-            os.getenv("INITIAL_BALANCE", "100")
-        )
-        
-        self._initialized = True
-        logger.info("✅ Config محملة بنجاح")
-    
-    @property
-    def is_testnet(self) -> bool:
-        """هل نعمل على Testnet؟"""
-        return self.environment == "testnet"
-    
-    @property
-    def is_production(self) -> bool:
-        """هل نعمل على الإنتاج؟"""
-        return self.environment == "production"
-    
-    def validate_all(self) -> bool:
-        """التحقق من جميع الإعدادات"""
-        exchange_ok = self.exchange.validate()
-        
-        if not exchange_ok:
-            logger.error("❌ فشل التحقق من إعدادات المنصة!")
-            return False
-        
-        logger.info("✅ جميع الإعدادات صحيحة")
-        return True
+        self.risk = RiskConfig()
+        self.trading = TradingConfig()
 
 
-# نسخة عامة للاستخدام
-config = Config()
+config = AppConfig()
