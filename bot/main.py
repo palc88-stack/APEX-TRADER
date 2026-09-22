@@ -2,24 +2,24 @@
 # APEX TRADER - Main Bot Engine
 # ======================================
 # المحرك الرئيسي للبوت
+# يجمع كل المكونات ويشغّلها
 
 import asyncio
-import sys
 import uuid
+import sys
 from datetime import datetime
 from typing import List
-
 from loguru import logger
 
 from bot.config import config
 from bot.core.exchange import ExchangeManager
-from bot.core.fee_calculator import FeeCalculator
-from bot.core.position_manager import Position, PositionManager
 from bot.core.risk_manager import RiskManager
-from bot.data.market_data import MarketDataManager
-from bot.data.state_manager import StateManager
-from bot.notifications.telegram_notifier import TelegramNotifier
+from bot.core.position_manager import PositionManager, Position
+from bot.core.fee_calculator import FeeCalculator
 from bot.signals.signal_engine import SignalEngine, TradeSignal
+from bot.data.state_manager import StateManager
+from bot.data.market_data import MarketDataManager
+from bot.notifications.telegram_notifier import TelegramNotifier
 
 
 logger.remove()
@@ -70,6 +70,7 @@ class ApexTrader:
     async def run(self) -> bool:
         """تشغيل دورة واحدة وإرجاع False عند فشل يمنع التداول."""
         logger.info("🤖 APEX TRADER - بدء دورة التداول")
+
         self._running = True
 
         try:
@@ -114,19 +115,14 @@ class ApexTrader:
 
         finally:
             self._running = False
-            await self._close_connections()
-
-    async def _close_connections(self) -> None:
-        """إغلاق اتصالات المنصات وبيانات السوق دائماً."""
-        try:
-            await self.exchange.close()
-        except Exception:
-            pass
-
-        try:
-            await self.market_data.close()
-        except Exception:
-            pass
+            try:
+                await self.exchange.close()
+            except Exception:
+                pass
+            try:
+                await self.market_data.close()
+            except Exception:
+                pass
 
     async def _health_check(self) -> bool:
         try:
@@ -145,17 +141,25 @@ class ApexTrader:
             return False
 
     async def _review_open_positions(self, balance: float) -> None:
-        for position in self.position_manager.get_all_positions():
+        positions = self.position_manager.get_all_positions()
+
+        if not positions:
+            logger.info("📊 لا توجد صفقات مفتوحة")
+            return
+
+        logger.info(f"📊 مراجعة {len(positions)} صفقة مفتوحة")
+
+        for position in positions:
             try:
                 ticker = await self.exchange.get_ticker(position.symbol)
                 current_price = ticker.get("last", 0)
+
                 if not current_price:
                     continue
 
                 df = await self.market_data.get_ohlcv(
                     position.symbol, config.trading.timeframe, limit=50
                 )
-
                 atr = 0.0
                 if df is not None and len(df) > 14:
                     indicators = self.signal_engine.indicators.calculate_all(df)
@@ -182,35 +186,45 @@ class ApexTrader:
                 logger.error(f"❌ خطأ في مراجعة {position.symbol}: {error}")
 
     async def _scan_for_opportunities(self, balance: float) -> None:
+        logger.info(f"🔍 مسح {len(config.trading.symbols)} عملة...")
+
         opportunities: List[TradeSignal] = []
 
         for symbol in config.trading.symbols:
             try:
                 df = await self.market_data.get_ohlcv(
-                    symbol, config.trading.timeframe, limit=100
+                    symbol,
+                    config.trading.timeframe,
+                    limit=100,
                 )
+
                 if df is None or len(df) < 60:
+                    logger.debug(f"⏭️ {symbol}: بيانات غير كافية")
                     continue
 
                 ticker = await self.exchange.get_ticker(symbol)
                 current_price = ticker.get("last", 0)
+
                 if not current_price:
                     continue
 
+                orderbook = await self.exchange.get_orderbook(symbol)
+
                 signal = self.signal_engine.analyze(
-                    symbol=symbol,
-                    df=df,
-                    current_price=current_price,
-                    orderbook=await self.exchange.get_orderbook(symbol),
+                    symbol, df, current_price, orderbook
                 )
 
                 if signal.is_valid:
                     opportunities.append(signal)
+                    logger.info(
+                        f"💡 فرصة: {symbol} {signal.direction.value} "
+                        f"| ثقة: {signal.confidence:.1%}"
+                    )
 
             except Exception as error:
                 logger.error(f"❌ خطأ في مسح {symbol}: {error}")
 
-        opportunities.sort(key=lambda item: item.confidence, reverse=True)
+        opportunities.sort(key=lambda x: x.confidence, reverse=True)
 
         for signal in opportunities[:3]:
             await self._execute_signal(signal, balance)
@@ -218,32 +232,38 @@ class ApexTrader:
 
     async def _execute_signal(self, signal: TradeSignal, balance: float) -> None:
         risk_check = self.risk_manager.check_signal(signal, balance)
+
         if not risk_check.approved:
-            logger.info(f"🚫 رُفضت الصفقة: {signal.symbol} | {risk_check.reason}")
+            logger.info(
+                f"🚫 رُفضت الصفقة: {signal.symbol} | {risk_check.reason}"
+            )
             return
 
-        position_value = risk_check.adjusted_size * risk_check.adjusted_leverage
+        for warning in risk_check.warnings:
+            logger.warning(warning)
 
+        position_value = risk_check.adjusted_size * risk_check.adjusted_leverage
         targets = self.fee_calculator.adjust_targets(
-            signal.entry_price,
-            signal.direction.value.lower(),
-            config.risk.default_sl_pct,
-            config.risk.tp1_pct,
-            config.risk.tp2_pct,
-            position_value,
+            entry_price=signal.entry_price,
+            direction=signal.direction.value.lower(),
+            sl_pct=config.risk.default_sl_pct,
+            tp1_pct=config.risk.tp1_pct,
+            tp2_pct=config.risk.tp2_pct,
+            position_size=position_value,
         )
 
         try:
             order = await self.exchange.place_order(
-                signal.symbol,
-                signal.direction.value.lower(),
-                risk_check.adjusted_size,
-                risk_check.adjusted_leverage,
-                targets["stop_loss"],
-                targets["tp1"],
+                symbol=signal.symbol,
+                direction=signal.direction.value.lower(),
+                size_usd=risk_check.adjusted_size,
+                leverage=risk_check.adjusted_leverage,
+                stop_loss=targets["stop_loss"],
+                take_profit=targets["tp1"],
             )
 
             if not order:
+                logger.error(f"❌ فشل تنفيذ أمر {signal.symbol}")
                 return
 
             position = Position(
@@ -272,21 +292,28 @@ class ApexTrader:
         except Exception as error:
             logger.exception(f"❌ خطأ في تنفيذ الصفقة {signal.symbol}: {error}")
 
-    async def _close_position(self, position, close_price, reason, balance):
+    async def _close_position(
+        self,
+        position: Position,
+        close_price: float,
+        reason: str,
+        balance: float,
+    ) -> None:
         try:
-            if not await self.exchange.close_position(
-                position.symbol, position.direction.value.lower()
-            ):
-                logger.error(f"❌ تعذر إغلاق {position.symbol} على المنصة")
-                return
+            await self.exchange.close_position(
+                position.symbol,
+                position.direction.value.lower(),
+            )
 
             closed = self.position_manager.close_position(
                 position.id, close_price, reason
             )
+
             if not closed:
                 return
 
             self.risk_manager.position_closed(closed.pnl)
+
             if closed.pnl > 0:
                 self._winning_trades += 1
 
@@ -297,13 +324,23 @@ class ApexTrader:
         except Exception as error:
             logger.exception(f"❌ خطأ في إغلاق {position.symbol}: {error}")
 
-    async def _partial_close_position(self, position, close_price, percentage, balance):
+    async def _partial_close_position(
+        self,
+        position: Position,
+        close_price: float,
+        percentage: int,
+        balance: float,
+    ) -> None:
         try:
-            if not await self.exchange.partial_close(
-                position.symbol, position.direction.value.lower(), percentage
-            ):
-                logger.error(f"❌ تعذر الإغلاق الجزئي لـ {position.symbol}")
-                return
+            logger.info(
+                f"🎯 TP1: إغلاق {percentage}% من {position.symbol} @ {close_price}"
+            )
+
+            await self.exchange.partial_close(
+                position.symbol,
+                position.direction.value.lower(),
+                percentage,
+            )
 
             partial_pnl = position.unrealized_pnl * (percentage / 100)
             await self.notifier.send_partial_close(
@@ -314,41 +351,57 @@ class ApexTrader:
             logger.exception(f"❌ خطأ في الإغلاق الجزئي {position.symbol}: {error}")
 
     async def _apply_compounding(self, pnl: float, balance: float) -> None:
-        if pnl > 0:
-            compound = pnl * config.risk.compounding_rate
-            new_balance = balance + compound
-            await self.state_manager.record_compounding(
-                new_balance, compound
-            )
+        if pnl <= 0:
+            return
+
+        compound_amount = pnl * config.risk.compounding_rate
+        reserved_amount = pnl - compound_amount
+
+        logger.info(
+            f"💰 Compounding: إعادة استثمار ${compound_amount:.2f} | "
+            f"محجوز: ${reserved_amount:.2f}"
+        )
+
+        await self.state_manager.record_compounding(
+            compound_amount,
+            reserved_amount,
+        )
 
     async def _load_state(self) -> None:
         try:
             state = await self.state_manager.load_state()
             if state:
-                self.risk_manager._daily_loss = state.get("daily_loss", 0)
-                self._total_trades = state.get("total_trades", 0)
-                self._winning_trades = state.get("winning_trades", 0)
+                if "daily_loss" in state:
+                    self.risk_manager._daily_loss = state["daily_loss"]
+                if "total_trades" in state:
+                    self._total_trades = state["total_trades"]
+                logger.info("✅ تم تحميل الحالة السابقة")
+            else:
+                logger.info("📝 بدء جديد - لا توجد حالة سابقة")
+
         except Exception as error:
             logger.warning(f"⚠️ لم يتم تحميل الحالة: {error}")
 
     async def _save_state(self) -> None:
         try:
-            await self.state_manager.save_state(
-                {
-                    "daily_loss": self.risk_manager.daily_loss,
-                    "total_trades": self._total_trades,
-                    "winning_trades": self._winning_trades,
-                    "open_positions": self.position_manager.count,
-                    "timestamp": datetime.utcnow().isoformat(),
-                }
-            )
+            state = {
+                "daily_loss": self.risk_manager.daily_loss,
+                "total_trades": self._total_trades,
+                "winning_trades": self._winning_trades,
+                "open_positions": self.position_manager.count,
+                "timestamp": datetime.utcnow().isoformat(),
+            }
+
+            await self.state_manager.save_state(state)
+            logger.debug("💾 تم حفظ الحالة")
+
         except Exception as error:
             logger.warning(f"⚠️ لم يتم حفظ الحالة: {error}")
 
     def get_stats(self) -> dict:
         win_rate = (
             self._winning_trades / self._total_trades * 100
-            if self._total_trades
+            if self._total_trades > 0
             else 0
         )
 
@@ -363,13 +416,18 @@ class ApexTrader:
         }
 
 
-async def main() -> None:
+async def main():
+    """نقطة الدخول - تُستدعى من GitHub Actions"""
     try:
         bot = ApexTrader()
-        if not await bot.run():
-            raise RuntimeError("فشلت دورة التداول")
+        success = await bot.run()
+
+        if not success:
+            sys.exit(1)
+
     except KeyboardInterrupt:
         logger.info("⏹️ تم إيقاف البوت يدوياً")
+
     except Exception as error:
         logger.exception(f"💥 خطأ فادح: {error}")
         sys.exit(1)
