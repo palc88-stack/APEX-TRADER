@@ -12,8 +12,6 @@ requests==2.31.0
 # Technical Analysis
 pandas==2.1.4
 numpy==1.26.2
-# Technical indicators are calculated internally in bot/signals/indicators.py.
-# pandas-ta is intentionally not required.
 
 # Database
 supabase==2.3.0
