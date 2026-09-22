@@ -12,7 +12,7 @@ requests==2.31.0
 # Technical Analysis
 pandas==2.1.4
 numpy==1.26.2
-pandas-ta==0.3.14b
+pandas-ta==0.3.14
 
 # Database
 supabase==2.3.0
