@@ -1,14 +1,7 @@
-# ======================================
-# APEX TRADER - Exchange Manager
-# ======================================
-# اتصال حقيقي 100% بـ Binance و Bybit
-# عبر مكتبة CCXT الموثوقة
-# لا بيانات وهمية - كل شيء حقيقي!
+import time
+from typing import Dict, List, Optional
 
 import ccxt.async_support as ccxt
-import asyncio
-import time
-from typing import Optional, Dict, List
 from loguru import logger
 
 from bot.config import config
@@ -16,262 +9,451 @@ from bot.config import config
 
 class ExchangeManager:
     """
-    مدير الاتصال بمنصات التداول
-    
-    يتعامل مع:
-    - Binance Futures (رئيسي)
-    - Bybit Futures (احتياطي)
-    
-    كل البيانات حقيقية من API المنصات
+    مدير متعدد المنصات.
+
+    حالياً يمكن تشغيل:
+        TRADING_EXCHANGES=binance
+
+    مستقبلاً:
+        TRADING_EXCHANGES=binance,bybit
+
+    الدوال تحافظ على واجهة المنصة القديمة، لذلك:
+        get_ticker(symbol)
+    ما زالت تعمل، وتستخدم المنصة الأساسية تلقائياً.
     """
-    
+
     def __init__(self):
-        self._binance: Optional[ccxt.binanceusdm] = None
-        self._bybit: Optional[ccxt.bybit] = None
-        self.active_exchange: str = "binance"
-        self._last_latency: float = 0.0
-        self._initialized: bool = False
-        
-        # تهيئة الاتصالات
+        self._exchanges: Dict[str, ccxt.Exchange] = {}
+        self._markets_loaded: Dict[str, bool] = {}
+        self._latency: Dict[str, float] = {}
+
+        self.enabled_exchanges = (
+            config.exchange.enabled_exchanges()
+        )
+
+        if not self.enabled_exchanges:
+            raise RuntimeError(
+                "No exchange with complete credentials is enabled"
+            )
+
+        self.active_exchange = (
+            self.enabled_exchanges[0]
+        )
+
         self._init_exchanges()
-    
+
     def _init_exchanges(self) -> None:
-        """
-        تهيئة الاتصال الحقيقي بالمنصات
-        باستخدام المفاتيح من .env
-        """
-        # === Binance Futures ===
+        for exchange_name in self.enabled_exchanges:
+            try:
+                if exchange_name == "binance":
+                    exchange = ccxt.binanceusdm(
+                        {
+                            "apiKey": config.exchange.binance_api_key,
+                            "secret": config.exchange.binance_secret_key,
+                            "enableRateLimit": True,
+                            "timeout": 15000,
+                            "options": {
+                                "defaultType": "future",
+                                "adjustForTimeDifference": True,
+                            },
+                        }
+                    )
+
+                    if config.exchange.binance_testnet:
+                        exchange.set_sandbox_mode(True)
+
+                elif exchange_name == "bybit":
+                    exchange = ccxt.bybit(
+                        {
+                            "apiKey": config.exchange.bybit_api_key,
+                            "secret": config.exchange.bybit_secret_key,
+                            "enableRateLimit": True,
+                            "timeout": 15000,
+                            "options": {
+                                "defaultType": "linear",
+                                "adjustForTimeDifference": True,
+                            },
+                        }
+                    )
+
+                    if config.exchange.bybit_testnet:
+                        exchange.set_sandbox_mode(True)
+
+                else:
+                    raise RuntimeError(
+                        f"Unsupported exchange: {exchange_name}"
+                    )
+
+                self._exchanges[exchange_name] = exchange
+                self._markets_loaded[exchange_name] = False
+                self._latency[exchange_name] = 0.0
+
+                logger.info(
+                    "✅ Exchange initialized: {}",
+                    exchange_name,
+                )
+
+            except Exception as error:
+                logger.exception(
+                    "❌ Failed to initialize {}: {}",
+                    exchange_name,
+                    error,
+                )
+
+        if not self._exchanges:
+            raise RuntimeError(
+                "All configured exchanges failed to initialize"
+            )
+
+        logger.info(
+            "🏦 Active exchanges: {}",
+            ", ".join(self._exchanges.keys()),
+        )
+
+    def available_exchanges(self) -> List[str]:
+        return list(self._exchanges.keys())
+
+    def _resolve_exchange(
+        self,
+        exchange_name: Optional[str] = None,
+    ) -> str:
+        selected = (
+            exchange_name or self.active_exchange
+        ).lower()
+
+        if selected not in self._exchanges:
+            raise RuntimeError(
+                f"Exchange is not initialized: {selected}"
+            )
+
+        return selected
+
+    def get_exchange(
+        self,
+        exchange_name: Optional[str] = None,
+    ) -> ccxt.Exchange:
+        selected = self._resolve_exchange(
+            exchange_name
+        )
+        return self._exchanges[selected]
+
+    def normalize_symbol(
+        self,
+        symbol: str,
+        exchange_name: Optional[str] = None,
+    ) -> str:
+        selected = self._resolve_exchange(
+            exchange_name
+        )
+        normalized = symbol.strip().upper()
+
+        if (
+            selected == "bybit"
+            and normalized.endswith("/USDT")
+        ):
+            return f"{normalized}:USDT"
+
+        return normalized
+
+    async def _load_markets(
+        self,
+        exchange_name: Optional[str] = None,
+    ) -> None:
+        selected = self._resolve_exchange(
+            exchange_name
+        )
+        exchange = self._exchanges[selected]
+
+        if not self._markets_loaded[selected]:
+            await exchange.load_markets()
+            self._markets_loaded[selected] = True
+
+    async def check_connection(
+        self,
+        exchange_name: Optional[str] = None,
+    ) -> bool:
+        selected = self._resolve_exchange(
+            exchange_name
+        )
+        exchange = self._exchanges[selected]
+
         try:
-            binance_config = {
-                'apiKey': config.exchange.binance_api_key,
-                'secret': config.exchange.binance_secret_key,
-                'enableRateLimit': True,
-                'options': {
-                    'defaultType': 'future',
-                    'adjustForTimeDifference': True,
-                },
-                'timeout': 10000,  # 10 ثوانٍ
-            }
-            
-            # Testnet إذا لزم
-            if config.exchange.binance_testnet:
-                binance_config['options']['sandboxMode'] = True
-                binance_config['urls'] = {
-                    'api': {
-                        'public': (
-                            'https://testnet.binancefuture.com'
-                        ),
-                        'private': (
-                            'https://testnet.binancefuture.com'
-                        ),
-                    }
-                }
-            
-            self._binance = ccxt.binanceusdm(binance_config)
-            logger.info("✅ Binance Futures جاهز")
-            
-        except Exception as e:
-            logger.error(f"❌ Binance فشل التهيئة: {e}")
-        
-        # === Bybit Futures ===
-        try:
-            bybit_config = {
-                'apiKey': config.exchange.bybit_api_key,
-                'secret': config.exchange.bybit_secret_key,
-                'enableRateLimit': True,
-                'options': {
-                    'defaultType': 'linear',
-                },
-                'timeout': 10000,
-            }
-            
-            if config.exchange.bybit_testnet:
-                bybit_config['options']['testnet'] = True
-            
-            self._bybit = ccxt.bybit(bybit_config)
-            logger.info("✅ Bybit Futures جاهز")
-            
-        except Exception as e:
-            logger.error(f"❌ Bybit فشل التهيئة: {e}")
-        
-        self._initialized = True
-    
-    @property
-    def _exchange(self):
-        """المنصة النشطة حالياً"""
-        if self.active_exchange == "bybit" and self._bybit:
-            return self._bybit
-        if self._binance:
-            return self._binance
-        raise RuntimeError("❌ لا توجد منصة متاحة!")
-    
-    async def check_connection(self) -> bool:
-        """
-        التحقق من الاتصال الحقيقي بالمنصة
-        عبر استدعاء API فعلي
-        """
-        try:
-            start = time.time()
-            
-            # طلب حقيقي للمنصة
-            await self._exchange.fetch_time()
-            
-            self._last_latency = (time.time() - start) * 1000
-            
+            started = time.monotonic()
+
+            await self._load_markets(selected)
+            await exchange.fetch_time()
+
+            latency = (
+                time.monotonic() - started
+            ) * 1000
+
+            self._latency[selected] = latency
+
             logger.info(
-                f"✅ اتصال جيد | "
-                f"زمن: {self._last_latency:.0f}ms"
+                "✅ {} connection OK | latency={:.0f}ms",
+                selected,
+                latency,
             )
             return True
-            
-        except ccxt.NetworkError as e:
-            logger.error(f"❌ خطأ شبكة: {e}")
+
+        except ccxt.AuthenticationError as error:
+            logger.error(
+                "❌ {} authentication failed: {}",
+                selected,
+                error,
+            )
             return False
-        except ccxt.ExchangeError as e:
-            logger.error(f"❌ خطأ منصة: {e}")
+
+        except ccxt.NetworkError as error:
+            logger.error(
+                "❌ {} network error: {}",
+                selected,
+                error,
+            )
             return False
-        except Exception as e:
-            logger.error(f"❌ خطأ اتصال: {e}")
+
+        except ccxt.ExchangeError as error:
+            logger.error(
+                "❌ {} exchange error: {}",
+                selected,
+                error,
+            )
             return False
-    
-    async def get_latency(self) -> float:
-        """قياس زمن الاستجابة الحقيقي"""
+
+        except Exception as error:
+            logger.exception(
+                "❌ {} connection error: {}",
+                selected,
+                error,
+            )
+            return False
+
+    async def check_all_connections(self) -> Dict[str, bool]:
+        results = {}
+
+        for exchange_name in self.available_exchanges():
+            results[exchange_name] = (
+                await self.check_connection(exchange_name)
+            )
+
+        return results
+
+    async def get_latency(
+        self,
+        exchange_name: Optional[str] = None,
+    ) -> float:
+        selected = self._resolve_exchange(
+            exchange_name
+        )
+        exchange = self._exchanges[selected]
+
         try:
-            start = time.time()
-            await self._exchange.fetch_time()
-            latency = (time.time() - start) * 1000
-            self._last_latency = latency
+            started = time.monotonic()
+            await exchange.fetch_time()
+
+            latency = (
+                time.monotonic() - started
+            ) * 1000
+
+            self._latency[selected] = latency
             return latency
+
         except Exception:
             return 999.0
-    
-    async def get_balance(self) -> float:
-        """
-        جلب الرصيد الحقيقي من المنصة
-        
-        Returns:
-            float: الرصيد بـ USDT
-        """
+
+    async def get_balance(
+        self,
+        exchange_name: Optional[str] = None,
+    ) -> float:
+        selected = self._resolve_exchange(
+            exchange_name
+        )
+        exchange = self._exchanges[selected]
+
         try:
-            # طلب حقيقي للرصيد
-            balance_data = await self._exchange.fetch_balance()
-            
-            # استخراج USDT المتاح
-            usdt_balance = (
-                balance_data
-                .get('USDT', {})
-                .get('free', 0.0)
-            )
-            
-            if usdt_balance is None:
-                usdt_balance = 0.0
-            
-            logger.debug(f"💰 الرصيد الحقيقي: ${usdt_balance:.2f}")
-            return float(usdt_balance)
-            
+            balance = await exchange.fetch_balance()
+            usdt = balance.get("USDT", {})
+            free_balance = usdt.get("free", 0.0)
+
+            return float(free_balance or 0.0)
+
         except ccxt.AuthenticationError:
-            logger.error("❌ خطأ مصادقة - تحقق من API Keys!")
+            logger.error(
+                "❌ Authentication failed on {}",
+                selected,
+            )
             return 0.0
-        except ccxt.ExchangeError as e:
-            logger.error(f"❌ خطأ جلب الرصيد: {e}")
+
+        except Exception as error:
+            logger.error(
+                "❌ Balance error on {}: {}",
+                selected,
+                error,
+            )
             return 0.0
-        except Exception as e:
-            logger.error(f"❌ خطأ غير متوقع: {e}")
-            return 0.0
-    
-    async def get_ticker(self, symbol: str) -> dict:
-        """
-        جلب السعر الحالي الحقيقي
-        
-        Args:
-            symbol: رمز العملة (BTC/USDT)
-            
-        Returns:
-            dict: بيانات السعر الحقيقية
-        """
+
+    async def get_ticker(
+        self,
+        symbol: str,
+        exchange_name: Optional[str] = None,
+    ) -> dict:
+        selected = self._resolve_exchange(
+            exchange_name
+        )
+        exchange = self._exchanges[selected]
+        market_symbol = self.normalize_symbol(
+            symbol,
+            selected,
+        )
+
         try:
-            # بيانات حقيقية من المنصة
-            ticker = await self._exchange.fetch_ticker(symbol)
-            
+            ticker = await exchange.fetch_ticker(
+                market_symbol
+            )
+
             return {
-                'last': float(ticker.get('last') or 0),
-                'bid': float(ticker.get('bid') or 0),
-                'ask': float(ticker.get('ask') or 0),
-                'volume': float(ticker.get('baseVolume') or 0),
-                'change_pct': float(
-                    ticker.get('percentage') or 0
+                "last": float(ticker.get("last") or 0),
+                "bid": float(ticker.get("bid") or 0),
+                "ask": float(ticker.get("ask") or 0),
+                "volume": float(
+                    ticker.get("baseVolume") or 0
                 ),
-                'high': float(ticker.get('high') or 0),
-                'low': float(ticker.get('low') or 0),
+                "change_pct": float(
+                    ticker.get("percentage") or 0
+                ),
+                "high": float(ticker.get("high") or 0),
+                "low": float(ticker.get("low") or 0),
             }
-            
+
         except ccxt.BadSymbol:
-            logger.warning(f"⚠️ رمز غير صالح: {symbol}")
+            logger.warning(
+                "⚠️ Invalid symbol {} on {}",
+                symbol,
+                selected,
+            )
             return {}
-        except Exception as e:
-            logger.error(f"❌ خطأ جلب سعر {symbol}: {e}")
+
+        except Exception as error:
+            logger.error(
+                "❌ Ticker error {} on {}: {}",
+                symbol,
+                selected,
+                error,
+            )
             return {}
-    
+
     async def get_orderbook(
         self,
         symbol: str,
-        limit: int = 10
+        limit: int = 10,
+        exchange_name: Optional[str] = None,
     ) -> Optional[dict]:
-        """
-        جلب دفتر الأوامر الحقيقي
-        
-        Args:
-            symbol: رمز العملة
-            limit: عمق دفتر الأوامر
-            
-        Returns:
-            dict: دفتر الأوامر الحقيقي
-        """
+        selected = self._resolve_exchange(
+            exchange_name
+        )
+        exchange = self._exchanges[selected]
+        market_symbol = self.normalize_symbol(
+            symbol,
+            selected,
+        )
+
         try:
-            # بيانات حقيقية من المنصة
-            ob = await self._exchange.fetch_order_book(
-                symbol, limit=limit
+            orderbook = await exchange.fetch_order_book(
+                market_symbol,
+                limit=limit,
             )
-            
+
             return {
-                'bids': ob.get('bids', []),
-                'asks': ob.get('asks', []),
-                'timestamp': ob.get('timestamp', 0)
+                "bids": orderbook.get("bids", []),
+                "asks": orderbook.get("asks", []),
+                "timestamp": orderbook.get(
+                    "timestamp",
+                    0,
+                ),
             }
-            
-        except Exception as e:
-            logger.debug(f"⚠️ خطأ جلب OrderBook {symbol}: {e}")
+
+        except Exception as error:
+            logger.debug(
+                "Orderbook error {} on {}: {}",
+                symbol,
+                selected,
+                error,
+            )
             return None
-    
+
     async def set_leverage(
         self,
         symbol: str,
-        leverage: int
+        leverage: int,
+        exchange_name: Optional[str] = None,
     ) -> bool:
-        """
-        ضبط الرافعة المالية على المنصة
-        
-        Args:
-            symbol: رمز العملة
-            leverage: الرافعة المطلوبة
-            
-        Returns:
-            bool: نجح؟
-        """
+        selected = self._resolve_exchange(
+            exchange_name
+        )
+        exchange = self._exchanges[selected]
+        market_symbol = self.normalize_symbol(
+            symbol,
+            selected,
+        )
+
         try:
-            # ضبط حقيقي على المنصة
-            await self._exchange.set_leverage(leverage, symbol)
-            logger.debug(f"✅ رافعة {symbol}: {leverage}x")
+            await exchange.set_leverage(
+                leverage,
+                market_symbol,
+            )
             return True
-            
-        except ccxt.ExchangeError as e:
-            # بعض العملات لها حد أقصى للرافعة
-            logger.warning(f"⚠️ لا يمكن ضبط رافعة {symbol}: {e}")
+
+        except ccxt.ExchangeError as error:
+            logger.warning(
+                "⚠️ Cannot set leverage for {} on {}: {}",
+                symbol,
+                selected,
+                error,
+            )
             return False
-        except Exception as e:
-            logger.error(f"❌ خطأ ضبط رافعة: {e}")
-            return False
-    
+
+    async def _create_binance_protection_orders(
+        self,
+        exchange: ccxt.Exchange,
+        symbol: str,
+        close_side: str,
+        amount: float,
+        stop_loss: float,
+        take_profit: float,
+    ) -> None:
+        """
+        أوامر حماية Binance Futures.
+
+        يتم إنشاؤها بعد نجاح أمر الدخول.
+        """
+        await exchange.create_order(
+            symbol,
+            "STOP_MARKET",
+            close_side,
+            amount,
+            None,
+            {
+                "stopPrice": stop_loss,
+                "reduceOnly": True,
+                "closePosition": True,
+                "workingType": "MARK_PRICE",
+            },
+        )
+
+        await exchange.create_order(
+            symbol,
+            "TAKE_PROFIT_MARKET",
+            close_side,
+            amount,
+            None,
+            {
+                "stopPrice": take_profit,
+                "reduceOnly": True,
+                "closePosition": True,
+                "workingType": "MARK_PRICE",
+            },
+        )
+
     async def place_order(
         self,
         symbol: str,
@@ -279,325 +461,500 @@ class ExchangeManager:
         size_usd: float,
         leverage: int,
         stop_loss: float,
-        take_profit: float
+        take_profit: float,
+        exchange_name: Optional[str] = None,
     ) -> Optional[dict]:
         """
-        تنفيذ أمر تداول حقيقي على المنصة
-        
-        Args:
-            symbol: رمز العملة
-            direction: long أو short
-            size_usd: حجم الهامش بالدولار
-            leverage: الرافعة المالية
-            stop_loss: سعر وقف الخسارة
-            take_profit: سعر أخذ الربح
-            
-        Returns:
-            dict: تفاصيل الأمر المنفذ
+        تنفيذ أمر الدخول ثم أوامر SL/TP.
+
+        حالياً حماية Binance مفعلة.
+        Bybit يبقى مهيئاً ولكن لا يسمح بالتداول حتى تتم
+        إضافة واختبار صيغة حماية Bybit الخاصة.
         """
+        selected = self._resolve_exchange(
+            exchange_name
+        )
+        exchange = self._exchanges[selected]
+        market_symbol = self.normalize_symbol(
+            symbol,
+            selected,
+        )
+
+        entry_side = (
+            "buy"
+            if direction.lower() == "long"
+            else "sell"
+        )
+        close_side = (
+            "sell"
+            if entry_side == "buy"
+            else "buy"
+        )
+
+        entry_order = None
+        amount = 0.0
+
         try:
-            # 1. ضبط الرافعة أولاً
-            await self.set_leverage(symbol, leverage)
-            
-            # 2. جلب السعر الحالي
-            ticker = await self.get_ticker(symbol)
-            current_price = ticker.get('last', 0)
-            
-            if not current_price:
-                logger.error(f"❌ لا يوجد سعر لـ {symbol}")
-                return None
-            
-            # 3. حساب الكمية الحقيقية
-            position_value = size_usd * leverage
-            quantity = self._calculate_quantity(
-                symbol, position_value, current_price
+            if selected != "binance":
+                raise RuntimeError(
+                    "Trading is currently enabled for Binance only. "
+                    "Bybit is initialized but disabled until its "
+                    "SL/TP implementation is tested."
+                )
+
+            await self._load_markets(selected)
+            await self.set_leverage(
+                symbol,
+                leverage,
+                selected,
             )
-            
-            if quantity <= 0:
-                logger.error(f"❌ كمية غير صالحة: {quantity}")
-                return None
-            
-            # 4. تحديد جانب الأمر
-            side = 'buy' if direction == 'long' else 'sell'
-            
-            # 5. تنفيذ الأمر الحقيقي
-            params = {
-                'stopLoss': {
-                    'type': 'market',
-                    'stopPrice': stop_loss,
-                },
-                'takeProfit': {
-                    'type': 'limit',
-                    'stopPrice': take_profit,
-                }
-            }
-            
-            order = await self._exchange.create_order(
-                symbol=symbol,
-                type='market',
-                side=side,
-                amount=quantity,
-                params=params
+
+            ticker = await exchange.fetch_ticker(
+                market_symbol
             )
-            
+            current_price = float(
+                ticker.get("last") or 0
+            )
+
+            if current_price <= 0:
+                raise RuntimeError(
+                    f"Invalid price for {symbol}"
+                )
+
+            market = exchange.market(market_symbol)
+
+            raw_amount = (
+                size_usd * leverage
+            ) / current_price
+
+            amount = float(
+                exchange.amount_to_precision(
+                    market_symbol,
+                    raw_amount,
+                )
+            )
+
+            minimum = (
+                market.get("limits", {})
+                .get("amount", {})
+                .get("min")
+            )
+
+            if amount <= 0:
+                raise RuntimeError(
+                    f"Invalid order quantity for {symbol}"
+                )
+
+            if minimum is not None and amount < minimum:
+                raise RuntimeError(
+                    f"Quantity {amount} is below "
+                    f"minimum {minimum} for {symbol}"
+                )
+
+            entry_order = await exchange.create_order(
+                market_symbol,
+                "market",
+                entry_side,
+                amount,
+                None,
+                {},
+            )
+
+            try:
+                await self._create_binance_protection_orders(
+                    exchange=exchange,
+                    symbol=market_symbol,
+                    close_side=close_side,
+                    amount=amount,
+                    stop_loss=stop_loss,
+                    take_profit=take_profit,
+                )
+
+            except Exception as protection_error:
+                logger.critical(
+                    "❌ SL/TP creation failed for %s: %s. "
+                    "Emergency closing position.",
+                    symbol,
+                    protection_error,
+                )
+
+                try:
+                    await exchange.create_order(
+                        market_symbol,
+                        "market",
+                        close_side,
+                        amount,
+                        None,
+                        {
+                            "reduceOnly": True,
+                        },
+                    )
+                except Exception as close_error:
+                    logger.critical(
+                        "❌ EMERGENCY CLOSE FAILED for %s: %s",
+                        symbol,
+                        close_error,
+                    )
+
+                raise
+
             logger.info(
-                f"✅ أمر منفذ: {symbol} {direction.upper()} "
-                f"| الكمية: {quantity} "
-                f"| القيمة: ${position_value:.2f}"
+                "✅ Protected Binance order executed: "
+                "%s %s amount=%s SL=%s TP=%s",
+                symbol,
+                direction.upper(),
+                amount,
+                stop_loss,
+                take_profit,
             )
-            
-            return order
-            
+
+            return entry_order
+
         except ccxt.InsufficientFunds:
-            logger.error(f"❌ رصيد غير كافٍ لـ {symbol}")
+            logger.error(
+                "❌ Insufficient funds for %s",
+                symbol,
+            )
             return None
-        except ccxt.InvalidOrder as e:
-            logger.error(f"❌ أمر غير صالح {symbol}: {e}")
+
+        except ccxt.InvalidOrder as error:
+            logger.error(
+                "❌ Invalid order for %s: %s",
+                symbol,
+                error,
+            )
             return None
-        except ccxt.ExchangeError as e:
-            logger.error(f"❌ خطأ منصة {symbol}: {e}")
+
+        except ccxt.ExchangeError as error:
+            logger.error(
+                "❌ Exchange order error for %s: %s",
+                symbol,
+                error,
+            )
             return None
-        except Exception as e:
-            logger.exception(f"❌ خطأ تنفيذ أمر {symbol}: {e}")
+
+        except Exception as error:
+            logger.exception(
+                "❌ Order failed for %s: %s",
+                symbol,
+                error,
+            )
             return None
-    
-    def _calculate_quantity(
-        self,
-        symbol: str,
-        position_value: float,
-        price: float
-    ) -> float:
-        """
-        حساب الكمية الصحيحة للأمر
-        مع احترام حدود المنصة
-        """
-        if price <= 0:
-            return 0.0
-        
-        quantity = position_value / price
-        
-        # تدوير حسب رمز العملة
-        precision_map = {
-            'BTC/USDT': 3,
-            'ETH/USDT': 3,
-            'SOL/USDT': 1,
-            'XRP/USDT': 0,
-            'BNB/USDT': 2,
-        }
-        
-        decimals = precision_map.get(symbol, 2)
-        quantity = round(quantity, decimals)
-        
-        return max(quantity, 0)
-    
+
     async def close_position(
         self,
         symbol: str,
-        direction: str
+        direction: str,
+        exchange_name: Optional[str] = None,
     ) -> bool:
-        """
-        إغلاق صفقة مفتوحة بالكامل
-        
-        Args:
-            symbol: رمز العملة
-            direction: اتجاه الصفقة الأصلية
-            
-        Returns:
-            bool: نجح؟
-        """
+        selected = self._resolve_exchange(
+            exchange_name
+        )
+        exchange = self._exchanges[selected]
+        market_symbol = self.normalize_symbol(
+            symbol,
+            selected,
+        )
+        wanted_side = direction.lower()
+
         try:
-            # الجانب المعاكس للإغلاق
+            positions = await exchange.fetch_positions(
+                [market_symbol]
+            )
+
+            target = None
+
+            for position in positions:
+                position_side = position.get("side")
+                contracts = float(
+                    position.get("contracts") or 0
+                )
+
+                if (
+                    position_side == wanted_side
+                    and contracts > 0
+                ):
+                    target = position
+                    break
+
+            if target is None:
+                logger.warning(
+                    "No %s position found for %s",
+                    wanted_side,
+                    symbol,
+                )
+                return False
+
+            contracts = float(
+                target.get("contracts") or 0
+            )
+
+            amount = float(
+                exchange.amount_to_precision(
+                    market_symbol,
+                    contracts,
+                )
+            )
+
             close_side = (
-                'sell' if direction == 'long' else 'buy'
+                "sell"
+                if wanted_side == "long"
+                else "buy"
             )
-            
-            # جلب المركز الحالي
-            positions = await self._exchange.fetch_positions(
-                [symbol]
+
+            await exchange.create_order(
+                market_symbol,
+                "market",
+                close_side,
+                amount,
+                None,
+                {
+                    "reduceOnly": True,
+                },
             )
-            
-            if not positions:
-                logger.warning(f"⚠️ لا يوجد مركز مفتوح: {symbol}")
-                return False
-            
-            # إيجاد المركز الصحيح
-            target_position = None
-            for pos in positions:
-                pos_side = pos.get('side', '')
-                if (pos_side == 'long' and direction == 'long' or
-                        pos_side == 'short' and direction == 'short'):
-                    if float(pos.get('contracts', 0)) > 0:
-                        target_position = pos
-                        break
-            
-            if not target_position:
-                logger.warning(f"⚠️ لا يوجد مركز محدد: {symbol}")
-                return False
-            
-            # كمية الإغلاق
-            quantity = float(
-                target_position.get('contracts', 0)
-            )
-            
-            if quantity <= 0:
-                return False
-            
-            # تنفيذ أمر الإغلاق الحقيقي
-            await self._exchange.create_order(
-                symbol=symbol,
-                type='market',
-                side=close_side,
-                amount=quantity,
-                params={'reduceOnly': True}
-            )
-            
-            logger.info(f"✅ صفقة مغلقة: {symbol}")
+
             return True
-            
-        except ccxt.ExchangeError as e:
-            logger.error(f"❌ خطأ إغلاق {symbol}: {e}")
+
+        except Exception as error:
+            logger.exception(
+                "Close position error for %s: %s",
+                symbol,
+                error,
+            )
             return False
-        except Exception as e:
-            logger.exception(f"❌ خطأ غير متوقع: {e}")
-            return False
-    
+
     async def partial_close(
         self,
         symbol: str,
         direction: str,
-        percentage: int
+        percentage: int,
+        exchange_name: Optional[str] = None,
     ) -> bool:
-        """
-        إغلاق جزئي للصفقة
-        
-        Args:
-            symbol: رمز العملة
-            direction: اتجاه الصفقة
-            percentage: نسبة الإغلاق (50 = 50%)
-            
-        Returns:
-            bool: نجح؟
-        """
-        try:
-            close_side = (
-                'sell' if direction == 'long' else 'buy'
-            )
-            
-            # جلب المركز
-            positions = await self._exchange.fetch_positions(
-                [symbol]
-            )
-            
-            if not positions:
-                return False
-            
-            for pos in positions:
-                pos_contracts = float(pos.get('contracts', 0))
-                if pos_contracts > 0:
-                    # حساب الكمية الجزئية
-                    close_quantity = round(
-                        pos_contracts * (percentage / 100), 3
-                    )
-                    
-                    if close_quantity <= 0:
-                        return False
-                    
-                    # تنفيذ الإغلاق الجزئي
-                    await self._exchange.create_order(
-                        symbol=symbol,
-                        type='market',
-                        side=close_side,
-                        amount=close_quantity,
-                        params={'reduceOnly': True}
-                    )
-                    
-                    logger.info(
-                        f"✅ إغلاق جزئي: {symbol} "
-                        f"{percentage}% = {close_quantity}"
-                    )
-                    return True
-            
+        if not 0 < percentage <= 100:
             return False
-            
-        except Exception as e:
-            logger.error(f"❌ خطأ إغلاق جزئي {symbol}: {e}")
-            return False
-    
-    async def get_open_positions(self) -> List[dict]:
-        """
-        جلب جميع المراكز المفتوحة الحقيقية
-        من المنصة مباشرة
-        """
+
+        selected = self._resolve_exchange(
+            exchange_name
+        )
+        exchange = self._exchanges[selected]
+        market_symbol = self.normalize_symbol(
+            symbol,
+            selected,
+        )
+        wanted_side = direction.lower()
+
         try:
-            # جلب حقيقي من المنصة
-            positions = await self._exchange.fetch_positions()
-            
-            # فلترة المراكز النشطة فقط
-            open_positions = []
-            for pos in positions:
-                contracts = float(pos.get('contracts', 0))
-                if contracts > 0:
-                    open_positions.append({
-                        'symbol': pos.get('symbol', ''),
-                        'side': pos.get('side', ''),
-                        'size': contracts,
-                        'entry_price': float(
-                            pos.get('entryPrice', 0)
+            positions = await exchange.fetch_positions(
+                [market_symbol]
+            )
+
+            for position in positions:
+                position_side = position.get("side")
+                contracts = float(
+                    position.get("contracts") or 0
+                )
+
+                if position_side != wanted_side:
+                    continue
+
+                if contracts <= 0:
+                    continue
+
+                raw_amount = contracts * (
+                    percentage / 100
+                )
+
+                amount = float(
+                    exchange.amount_to_precision(
+                        market_symbol,
+                        raw_amount,
+                    )
+                )
+
+                if amount <= 0:
+                    return False
+
+                close_side = (
+                    "sell"
+                    if wanted_side == "long"
+                    else "buy"
+                )
+
+                await exchange.create_order(
+                    market_symbol,
+                    "market",
+                    close_side,
+                    amount,
+                    None,
+                    {
+                        "reduceOnly": True,
+                    },
+                )
+
+                logger.info(
+                    "✅ Partial close %s %s%%",
+                    symbol,
+                    percentage,
+                )
+                return True
+
+            return False
+
+        except Exception as error:
+            logger.exception(
+                "Partial close error for %s: %s",
+                symbol,
+                error,
+            )
+            return False
+
+    async def get_open_positions(
+        self,
+        exchange_name: Optional[str] = None,
+    ) -> List[dict]:
+        selected = self._resolve_exchange(
+            exchange_name
+        )
+        exchange = self._exchanges[selected]
+
+        try:
+            positions = await exchange.fetch_positions()
+            result = []
+
+            for position in positions:
+                contracts = float(
+                    position.get("contracts") or 0
+                )
+
+                if contracts <= 0:
+                    continue
+
+                result.append(
+                    {
+                        "symbol": position.get(
+                            "symbol",
+                            "",
                         ),
-                        'unrealized_pnl': float(
-                            pos.get('unrealizedPnl', 0)
+                        "side": position.get(
+                            "side",
+                            "",
                         ),
-                        'leverage': float(
-                            pos.get('leverage', 1)
+                        "size": contracts,
+                        "entry_price": float(
+                            position.get(
+                                "entryPrice",
+                                0,
+                            )
+                            or 0
                         ),
-                        'liquidation_price': float(
-                            pos.get('liquidationPrice', 0)
+                        "unrealized_pnl": float(
+                            position.get(
+                                "unrealizedPnl",
+                                0,
+                            )
+                            or 0
                         ),
-                    })
-            
-            return open_positions
-            
-        except Exception as e:
-            logger.error(f"❌ خطأ جلب المراكز: {e}")
+                        "leverage": float(
+                            position.get(
+                                "leverage",
+                                1,
+                            )
+                            or 1
+                        ),
+                        "liquidation_price": float(
+                            position.get(
+                                "liquidationPrice",
+                                0,
+                            )
+                            or 0
+                        ),
+                    }
+                )
+
+            return result
+
+        except Exception as error:
+            logger.error(
+                "Open positions error on {}: {}",
+                selected,
+                error,
+            )
             return []
-    
-    async def get_funding_rate(self, symbol: str) -> float:
-        """
-        جلب Funding Rate الحقيقي
-        
-        Returns:
-            float: نسبة التمويل الحالية
-        """
+
+    async def get_funding_rate(
+        self,
+        symbol: str,
+        exchange_name: Optional[str] = None,
+    ) -> float:
+        selected = self._resolve_exchange(
+            exchange_name
+        )
+        exchange = self._exchanges[selected]
+        market_symbol = self.normalize_symbol(
+            symbol,
+            selected,
+        )
+
         try:
-            funding = await self._exchange.fetch_funding_rate(
-                symbol
+            funding = await exchange.fetch_funding_rate(
+                market_symbol
             )
-            rate = float(
-                funding.get('fundingRate', 0) or 0
+
+            return float(
+                funding.get("fundingRate") or 0
             )
-            return rate
-            
-        except Exception as e:
-            logger.debug(f"⚠️ خطأ جلب Funding {symbol}: {e}")
+
+        except Exception as error:
+            logger.debug(
+                "Funding rate error {}: {}",
+                symbol,
+                error,
+            )
             return 0.0
-    
-    async def cancel_all_orders(self, symbol: str) -> bool:
-        """إلغاء جميع الأوامر المعلقة"""
+
+    async def cancel_all_orders(
+        self,
+        symbol: str,
+        exchange_name: Optional[str] = None,
+    ) -> bool:
+        selected = self._resolve_exchange(
+            exchange_name
+        )
+        exchange = self._exchanges[selected]
+        market_symbol = self.normalize_symbol(
+            symbol,
+            selected,
+        )
+
         try:
-            await self._exchange.cancel_all_orders(symbol)
-            logger.info(f"✅ تم إلغاء جميع أوامر {symbol}")
+            await exchange.cancel_all_orders(
+                market_symbol
+            )
             return True
-        except Exception as e:
-            logger.error(f"❌ خطأ إلغاء أوامر {symbol}: {e}")
+
+        except Exception as error:
+            logger.error(
+                "Cancel orders error {}: {}",
+                symbol,
+                error,
+            )
             return False
-    
+
     async def close(self) -> None:
-        """إغلاق الاتصالات بأمان"""
-        try:
-            if self._binance:
-                await self._binance.close()
-            if self._bybit:
-                await self._bybit.close()
-            logger.info("✅ تم إغلاق الاتصالات")
-        except Exception as e:
-            logger.error(f"❌ خطأ إغلاق الاتصالات: {e}")
+        for exchange_name, exchange in list(
+            self._exchanges.items()
+        ):
+            try:
+                await exchange.close()
+                logger.info(
+                    "✅ Closed {} connection",
+                    exchange_name,
+                )
+            except Exception as error:
+                logger.error(
+                    "Error closing {}: {}",
+                    exchange_name,
+                    error,
+                )
+
+        self._exchanges.clear()
