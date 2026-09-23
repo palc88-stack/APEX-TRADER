@@ -11,15 +11,15 @@ class ExchangeManager:
     """
     مدير متعدد المنصات.
 
-    حالياً يمكن تشغيل:
+    حالياً:
         TRADING_EXCHANGES=binance
 
     مستقبلاً:
         TRADING_EXCHANGES=binance,bybit
 
-    الدوال تحافظ على واجهة المنصة القديمة، لذلك:
-        get_ticker(symbol)
-    ما زالت تعمل، وتستخدم المنصة الأساسية تلقائياً.
+    يتم تشغيل Binance فقط للتداول في هذه النسخة.
+    Bybit يمكن تهيئته، لكن لا يتم فتح صفقات عليه
+    حتى تتم إضافة واختبار أوامر الحماية الخاصة به.
     """
 
     def __init__(self):
@@ -80,9 +80,11 @@ class ExchangeManager:
                         exchange.set_sandbox_mode(True)
 
                 else:
-                    raise RuntimeError(
-                        f"Unsupported exchange: {exchange_name}"
+                    logger.warning(
+                        "Unsupported exchange skipped: {}",
+                        exchange_name,
                     )
+                    continue
 
                 self._exchanges[exchange_name] = exchange
                 self._markets_loaded[exchange_name] = False
@@ -194,6 +196,7 @@ class ExchangeManager:
                 selected,
                 latency,
             )
+
             return True
 
         except ccxt.AuthenticationError as error:
@@ -421,11 +424,6 @@ class ExchangeManager:
         stop_loss: float,
         take_profit: float,
     ) -> None:
-        """
-        أوامر حماية Binance Futures.
-
-        يتم إنشاؤها بعد نجاح أمر الدخول.
-        """
         await exchange.create_order(
             symbol,
             "STOP_MARKET",
@@ -464,16 +462,17 @@ class ExchangeManager:
         take_profit: float,
         exchange_name: Optional[str] = None,
     ) -> Optional[dict]:
-        """
-        تنفيذ أمر الدخول ثم أوامر SL/TP.
-
-        حالياً حماية Binance مفعلة.
-        Bybit يبقى مهيئاً ولكن لا يسمح بالتداول حتى تتم
-        إضافة واختبار صيغة حماية Bybit الخاصة.
-        """
         selected = self._resolve_exchange(
             exchange_name
         )
+
+        if selected != "binance":
+            raise RuntimeError(
+                "Trading is currently enabled for Binance only. "
+                "Bybit is initialized but disabled until its "
+                "SL/TP implementation is tested."
+            )
+
         exchange = self._exchanges[selected]
         market_symbol = self.normalize_symbol(
             symbol,
@@ -485,24 +484,18 @@ class ExchangeManager:
             if direction.lower() == "long"
             else "sell"
         )
+
         close_side = (
             "sell"
             if entry_side == "buy"
             else "buy"
         )
 
-        entry_order = None
         amount = 0.0
 
         try:
-            if selected != "binance":
-                raise RuntimeError(
-                    "Trading is currently enabled for Binance only. "
-                    "Bybit is initialized but disabled until its "
-                    "SL/TP implementation is tested."
-                )
-
             await self._load_markets(selected)
+
             await self.set_leverage(
                 symbol,
                 leverage,
@@ -542,13 +535,13 @@ class ExchangeManager:
 
             if amount <= 0:
                 raise RuntimeError(
-                    f"Invalid order quantity for {symbol}"
+                    f"Invalid quantity for {symbol}"
                 )
 
             if minimum is not None and amount < minimum:
                 raise RuntimeError(
                     f"Quantity {amount} is below "
-                    f"minimum {minimum} for {symbol}"
+                    f"minimum {minimum}"
                 )
 
             entry_order = await exchange.create_order(
@@ -572,7 +565,7 @@ class ExchangeManager:
 
             except Exception as protection_error:
                 logger.critical(
-                    "❌ SL/TP creation failed for %s: %s. "
+                    "❌ SL/TP failed for %s: %s. "
                     "Emergency closing position.",
                     symbol,
                     protection_error,
@@ -591,7 +584,7 @@ class ExchangeManager:
                     )
                 except Exception as close_error:
                     logger.critical(
-                        "❌ EMERGENCY CLOSE FAILED for %s: %s",
+                        "❌ Emergency close failed for %s: %s",
                         symbol,
                         close_error,
                     )
@@ -599,7 +592,7 @@ class ExchangeManager:
                 raise
 
             logger.info(
-                "✅ Protected Binance order executed: "
+                "✅ Protected Binance order: "
                 "%s %s amount=%s SL=%s TP=%s",
                 symbol,
                 direction.upper(),
@@ -696,6 +689,9 @@ class ExchangeManager:
                 )
             )
 
+            if amount <= 0:
+                return False
+
             close_side = (
                 "sell"
                 if wanted_side == "long"
@@ -760,14 +756,10 @@ class ExchangeManager:
                 if contracts <= 0:
                     continue
 
-                raw_amount = contracts * (
-                    percentage / 100
-                )
-
                 amount = float(
                     exchange.amount_to_precision(
                         market_symbol,
-                        raw_amount,
+                        contracts * percentage / 100,
                     )
                 )
 
@@ -796,6 +788,7 @@ class ExchangeManager:
                     symbol,
                     percentage,
                 )
+
                 return True
 
             return False
@@ -952,7 +945,7 @@ class ExchangeManager:
                 )
             except Exception as error:
                 logger.error(
-                    "Error closing {}: {}",
+                    "❌ Error closing {}: {}",
                     exchange_name,
                     error,
                 )
