@@ -54,13 +54,14 @@ jobs:
         run: |
           test -f bot/__init__.py
           test -f bot/config.py
+          test -f bot/main.py
           test -f bot/core/exchange.py
           test -f bot/data/market_data.py
           test -f requirements.txt
 
           python -m compileall -q bot tests
 
-          python -c "from bot.config import config; print('enabled:', config.exchange.enabled_exchanges())"
+          python -c "from bot.config import config; print('enabled exchanges:', config.exchange.enabled_exchanges())"
           python -c "from bot.core.exchange import ExchangeManager; print('ExchangeManager import OK')"
           python -c "from bot.data.market_data import MarketDataManager; print('MarketDataManager import OK')"
 
