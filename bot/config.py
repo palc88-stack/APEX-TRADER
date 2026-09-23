@@ -78,6 +78,14 @@ class RiskConfig:
     compounding_rate: float = 0.1
     max_position_pct: float = 20.0
 
+    # --- كانت ناقصة وتسبب AttributeError فوري عند إنشاء FeeCalculator/PositionManager ---
+    breakeven_pct: float = 0.15            # % ربح لتفعيل Break Even
+    trailing_activation_pct: float = 0.30  # % ربح لتفعيل Trailing Stop
+    binance_maker_fee: float = 0.0002      # 0.02%
+    binance_taker_fee: float = 0.0004      # 0.04%
+    bybit_maker_fee: float = 0.0002        # 0.02%
+    bybit_taker_fee: float = 0.00055       # 0.055%
+
     def __post_init__(self):
         self.max_daily_loss_pct = float(
             os.getenv("MAX_DAILY_LOSS_PCT", str(self.max_daily_loss_pct))
@@ -93,6 +101,24 @@ class RiskConfig:
         )
         self.max_position_pct = float(
             os.getenv("MAX_POSITION_PCT", str(self.max_position_pct))
+        )
+        self.breakeven_pct = float(
+            os.getenv("BREAKEVEN_PCT", str(self.breakeven_pct))
+        )
+        self.trailing_activation_pct = float(
+            os.getenv("TRAILING_ACTIVATION_PCT", str(self.trailing_activation_pct))
+        )
+        self.binance_maker_fee = float(
+            os.getenv("BINANCE_MAKER_FEE", str(self.binance_maker_fee))
+        )
+        self.binance_taker_fee = float(
+            os.getenv("BINANCE_TAKER_FEE", str(self.binance_taker_fee))
+        )
+        self.bybit_maker_fee = float(
+            os.getenv("BYBIT_MAKER_FEE", str(self.bybit_maker_fee))
+        )
+        self.bybit_taker_fee = float(
+            os.getenv("BYBIT_TAKER_FEE", str(self.bybit_taker_fee))
         )
 
 
