@@ -39,25 +39,22 @@ jobs:
       - name: "📁 إعداد المجلدات"
         run: mkdir -p logs
 
-      - name: "📦 تحديث pip وتثبيت المكتبات"
+      - name: "📦 تثبيت المكتبات والتحقق من الاعتماديات"
         run: |
           python -m pip install --upgrade pip
-          python -m pip install \
-            --disable-pip-version-check \
-            --upgrade-strategy=only-if-needed \
-            -r requirements.txt
+          python -m pip install --disable-pip-version-check --upgrade-strategy=only-if-needed -r requirements.txt
           python -m pip check
           python -m pip show ccxt
           python -c "import ccxt; print('ccxt OK:', ccxt.__version__)"
           python -c "import ccxt.async_support as ccxt_async; print('ccxt.async_support OK')"
 
-      - name: "🔍 التحقق من مسار المشروع"
+      - name: "🔍 التحقق من المشروع قبل الاختبار"
         run: |
           pwd
           echo "PYTHONPATH=$PYTHONPATH"
           test -f bot/__init__.py
           test -f bot/core/exchange.py
-          python -c "import sys; print(sys.path)"
+          test -f requirements.txt
           python -c "import bot; print('bot imported OK')"
           python -c "from bot.core.fee_calculator import FeeCalculator; print('FeeCalculator imported OK')"
           python -c "from bot.core.exchange import ExchangeManager; print('ExchangeManager imported OK')"
