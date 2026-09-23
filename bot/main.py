@@ -382,6 +382,26 @@ class ApexTrader:
         except Exception as error:
             logger.warning(f"⚠️ لم يتم تحميل الحالة: {error}")
 
+        # --- استرجاع الصفقات المفتوحة الحقيقية (جديد) ---
+        # ضروري لأن GitHub Actions يبدأ container فارغ كل تشغيلة،
+        # فالذاكرة (position_manager._positions) تكون فارغة دائماً
+        # من غير هذه الخطوة، ولن تعمل إدارة Trailing/Breakeven/TP أبداً.
+        try:
+            open_positions = await self.state_manager.get_open_positions_from_db()
+
+            for position in open_positions:
+                self.position_manager.add_position(position)
+
+            if open_positions:
+                self.risk_manager._open_positions = len(open_positions)
+                logger.info(
+                    f"🔄 تمت استعادة {len(open_positions)} صفقة مفتوحة "
+                    f"إلى الذاكرة قبل بدء الدورة"
+                )
+
+        except Exception as error:
+            logger.warning(f"⚠️ لم يتم استرجاع الصفقات المفتوحة: {error}")
+
     async def _save_state(self) -> None:
         try:
             state = {
