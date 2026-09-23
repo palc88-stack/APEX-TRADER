@@ -14,6 +14,7 @@ from supabase import create_client, Client
 
 from bot.config import config
 from bot.core.position_manager import Position, PositionStatus
+from bot.signals.signal_engine import TradeDirection
 
 
 class StateManager:
@@ -233,6 +234,93 @@ class StateManager:
                 f"❌ Supabase load state خطأ: {e}"
             )
             return None
+
+    # ==========================================
+    # Open Positions Recovery (جديد)
+    # ==========================================
+
+    async def get_open_positions_from_db(self) -> List[Position]:
+        """
+        استرجاع كل الصفقات المفتوحة (status='OPEN') من Supabase
+        وإعادة بنائها ككائنات Position.
+
+        ضروري لأن GitHub Actions يشغّل container جديد تماماً كل
+        تشغيلة، وبالتالي أي صفقة محفوظة فقط في الذاكرة تُفقد.
+        هذه الدالة تُستدعى في بداية كل دورة لإعادة ملء
+        PositionManager بالحالة الحقيقية قبل مراجعة الصفقات.
+
+        ملاحظة: حالة Trailing Stop / Break Even التفصيلية غير
+        محفوظة في جدول trades حالياً، فبعد إعادة البناء ستبدأ
+        هذه الصفقات من منطق SL الأصلي وتُعاد بناء الـ Trailing
+        تدريجياً حسب حركة السعر التالية - وهذا أفضل بكثير من
+        فقدان تتبع الصفقة بالكامل.
+        """
+        if not self._db_available:
+            logger.warning(
+                "⚠️ Supabase غير متاح - لن تُسترجع الصفقات المفتوحة"
+            )
+            return []
+
+        try:
+            result = self._supabase.table("trades").select(
+                "*"
+            ).eq("status", "OPEN").execute()
+
+            positions: List[Position] = []
+
+            for row in (result.data or []):
+                try:
+                    opened_at_raw = row.get("opened_at")
+                    opened_at = (
+                        datetime.fromisoformat(
+                            opened_at_raw.replace("Z", "+00:00")
+                        )
+                        if opened_at_raw
+                        else datetime.now(timezone.utc)
+                    )
+
+                    position = Position(
+                        id=row["id"],
+                        symbol=row["symbol"],
+                        direction=TradeDirection(row["direction"]),
+                        exchange=row.get("exchange", "binance"),
+                        entry_price=float(row["entry_price"]),
+                        current_price=float(row["entry_price"]),
+                        stop_loss=float(row.get("stop_loss") or 0),
+                        take_profit_1=float(
+                            row.get("take_profit_1") or 0
+                        ),
+                        take_profit_2=float(
+                            row.get("take_profit_2") or 0
+                        ),
+                        size_usd=float(row["size_usd"]),
+                        leverage=int(row["leverage"]),
+                        entry_fee=float(row.get("entry_fee") or 0),
+                        exit_fee=float(row.get("exit_fee") or 0),
+                        opened_at=opened_at,
+                    )
+                    position.highest_price = position.entry_price
+                    position.lowest_price = position.entry_price
+
+                    positions.append(position)
+
+                except Exception as row_error:
+                    logger.error(
+                        f"❌ خطأ إعادة بناء صفقة "
+                        f"{row.get('id', '?')}: {row_error}"
+                    )
+
+            if positions:
+                logger.info(
+                    f"🔄 تم استرجاع {len(positions)} صفقة مفتوحة "
+                    f"من قاعدة البيانات"
+                )
+
+            return positions
+
+        except Exception as e:
+            logger.error(f"❌ خطأ جلب الصفقات المفتوحة: {e}")
+            return []
 
     # ==========================================
     # Trade Management
