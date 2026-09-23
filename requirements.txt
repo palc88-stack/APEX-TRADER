@@ -1,5 +1,6 @@
 # ======================================
-# APEX TRADER - Dependencies
+# APEX TRADER - Compatible Dependencies
+# Python: 3.11
 # ======================================
 
 # Exchange APIs
@@ -8,7 +9,8 @@ ccxt==4.2.25
 # HTTP & WebSocket
 aiohttp==3.9.1
 requests==2.31.0
-httpx==0.26.0
+# Required by python-telegram-bot==20.7
+httpx==0.25.2
 
 # Technical Analysis
 pandas==2.1.4
