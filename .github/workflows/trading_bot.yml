@@ -6,12 +6,15 @@ name: APEX TRADER
 
 on:
   schedule:
-    - cron: '*/5 * * * *'
+    - cron: "*/5 * * * *"
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   trade:
-    name: '🤖 دورة التداول'
+    name: "🤖 دورة التداول"
     runs-on: ubuntu-latest
     timeout-minutes: 4
 
@@ -20,24 +23,29 @@ jobs:
       cancel-in-progress: false
 
     steps:
-      - name: '📥 جلب الكود'
+      - name: "📥 جلب الكود"
         uses: actions/checkout@v4
 
-      - name: '🐍 إعداد Python 3.11'
+      - name: "🐍 إعداد Python 3.11"
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
-          cache: 'pip'
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements.txt
 
-      - name: '📦 تثبيت المكتبات'
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install -r requirements.txt
-
-      - name: '📁 إعداد المجلدات'
+      - name: "📁 إعداد المجلدات"
         run: mkdir -p logs
 
-      - name: '🔎 فحص Python والاختبارات السريعة'
+      - name: "📦 تحديث pip وتثبيت المكتبات"
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install \
+            --disable-pip-version-check \
+            --upgrade-strategy=only-if-needed \
+            -r requirements.txt
+          python -m pip check
+
+      - name: "🔎 فحص Python والاختبارات السريعة"
         env:
           BINANCE_API_KEY: ${{ secrets.BINANCE_API_KEY }}
           BINANCE_SECRET_KEY: ${{ secrets.BINANCE_SECRET_KEY }}
@@ -62,7 +70,7 @@ jobs:
           pytest tests/ -x -q --timeout=30 \
             -k "not test_real_balance and not test_real_ohlcv_data and not test_signal_engine_no_mock and not test_indicators_output_validity and not test_all_prices_from_api and not test_real_ticker and not test_indicators_with_real_data"
 
-      - name: '🚀 تشغيل البوت'
+      - name: "🚀 تشغيل البوت"
         env:
           BINANCE_API_KEY: ${{ secrets.BINANCE_API_KEY }}
           BINANCE_SECRET_KEY: ${{ secrets.BINANCE_SECRET_KEY }}
@@ -84,8 +92,8 @@ jobs:
           COMPOUNDING_RATE: ${{ secrets.COMPOUNDING_RATE }}
         run: python -m bot.main
 
-      - name: '📋 رفع السجلات عند الفشل'
-        if: failure()
+      - name: "📋 رفع السجلات عند الفشل"
+        if: ${{ failure() }}
         uses: actions/upload-artifact@v4
         with:
           name: error-logs-${{ github.run_id }}
