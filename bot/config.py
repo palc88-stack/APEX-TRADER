@@ -2,6 +2,7 @@
 # APEX TRADER - Configuration
 # ======================================
 
+import math
 import os
 from dataclasses import dataclass, field
 from typing import List
@@ -9,6 +10,59 @@ from typing import List
 from dotenv import load_dotenv
 
 load_dotenv()
+
+
+def _env_text(name: str, default: str) -> str:
+    value = os.getenv(name)
+    if value is None or not value.strip():
+        return default
+    return value.strip()
+
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None or not value.strip():
+        return default
+    normalized = value.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError(
+        f"Invalid boolean value for {name}: {value!r}. "
+        "Expected one of: true, false, 1, 0, yes, no, on, off."
+    )
+
+
+def _env_float(name: str, default: float) -> float:
+    value = os.getenv(name)
+    if value is None or not value.strip():
+        return float(default)
+    try:
+        result = float(value.strip())
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"Invalid numeric value for {name}: {value!r}. "
+            f"Expected a decimal number. Default is {default}."
+        ) from exc
+    if not math.isfinite(result):
+        raise ValueError(
+            f"Invalid non-finite value for {name}: {value!r}."
+        )
+    return result
+
+
+def _env_int(name: str, default: int) -> int:
+    value = os.getenv(name)
+    if value is None or not value.strip():
+        return int(default)
+    try:
+        return int(value.strip())
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"Invalid integer value for {name}: {value!r}. "
+            f"Expected an integer. Default is {default}."
+        ) from exc
 
 
 @dataclass
@@ -21,18 +75,14 @@ class ExchangeConfig:
     bybit_secret_key: str = ""
     bybit_testnet: bool = False
 
-    def __post_init__(self):
-        self.binance_api_key = os.getenv("BINANCE_API_KEY", self.binance_api_key)
-        self.binance_secret_key = os.getenv("BINANCE_SECRET_KEY", self.binance_secret_key)
-        self.binance_testnet = (
-            os.getenv("BINANCE_TESTNET", "false").strip().lower() in {"1", "true", "yes"}
-        )
+    def __post_init__(self) -> None:
+        self.binance_api_key = _env_text("BINANCE_API_KEY", self.binance_api_key)
+        self.binance_secret_key = _env_text("BINANCE_SECRET_KEY", self.binance_secret_key)
+        self.binance_testnet = _env_bool("BINANCE_TESTNET", self.binance_testnet)
 
-        self.bybit_api_key = os.getenv("BYBIT_API_KEY", self.bybit_api_key)
-        self.bybit_secret_key = os.getenv("BYBIT_SECRET_KEY", self.bybit_secret_key)
-        self.bybit_testnet = (
-            os.getenv("BYBIT_TESTNET", "false").strip().lower() in {"1", "true", "yes"}
-        )
+        self.bybit_api_key = _env_text("BYBIT_API_KEY", self.bybit_api_key)
+        self.bybit_secret_key = _env_text("BYBIT_SECRET_KEY", self.bybit_secret_key)
+        self.bybit_testnet = _env_bool("BYBIT_TESTNET", self.bybit_testnet)
 
     def validate(self) -> bool:
         return bool(self.binance_api_key or self.bybit_api_key)
@@ -45,11 +95,11 @@ class DatabaseConfig:
     redis_url: str = ""
     redis_token: str = ""
 
-    def __post_init__(self):
-        self.supabase_url = os.getenv("SUPABASE_URL", self.supabase_url)
-        self.supabase_key = os.getenv("SUPABASE_KEY", self.supabase_key)
-        self.redis_url = os.getenv("UPSTASH_REDIS_URL", self.redis_url)
-        self.redis_token = os.getenv("UPSTASH_REDIS_TOKEN", self.redis_token)
+    def __post_init__(self) -> None:
+        self.supabase_url = _env_text("SUPABASE_URL", self.supabase_url)
+        self.supabase_key = _env_text("SUPABASE_KEY", self.supabase_key)
+        self.redis_url = _env_text("UPSTASH_REDIS_URL", self.redis_url)
+        self.redis_token = _env_text("UPSTASH_REDIS_TOKEN", self.redis_token)
 
     def validate(self) -> bool:
         return bool(self.supabase_url and self.supabase_key) or bool(self.redis_url)
@@ -60,9 +110,9 @@ class TelegramConfig:
     bot_token: str = ""
     chat_id: str = ""
 
-    def __post_init__(self):
-        self.bot_token = os.getenv("TELEGRAM_BOT_TOKEN", self.bot_token)
-        self.chat_id = os.getenv("TELEGRAM_CHAT_ID", self.chat_id)
+    def __post_init__(self) -> None:
+        self.bot_token = _env_text("TELEGRAM_BOT_TOKEN", self.bot_token)
+        self.chat_id = _env_text("TELEGRAM_CHAT_ID", self.chat_id)
 
     def validate(self) -> bool:
         return bool(self.bot_token and self.chat_id)
@@ -78,48 +128,30 @@ class RiskConfig:
     compounding_rate: float = 0.1
     max_position_pct: float = 20.0
 
-    # --- كانت ناقصة وتسبب AttributeError فوري عند إنشاء FeeCalculator/PositionManager ---
-    breakeven_pct: float = 0.15            # % ربح لتفعيل Break Even
-    trailing_activation_pct: float = 0.30  # % ربح لتفعيل Trailing Stop
-    binance_maker_fee: float = 0.0002      # 0.02%
-    binance_taker_fee: float = 0.0004      # 0.04%
-    bybit_maker_fee: float = 0.0002        # 0.02%
-    bybit_taker_fee: float = 0.00055       # 0.055%
+    breakeven_pct: float = 0.15
+    trailing_activation_pct: float = 0.30
+    binance_maker_fee: float = 0.0002
+    binance_taker_fee: float = 0.0004
+    bybit_maker_fee: float = 0.0002
+    bybit_taker_fee: float = 0.00055
 
-    def __post_init__(self):
-        self.max_daily_loss_pct = float(
-            os.getenv("MAX_DAILY_LOSS_PCT", str(self.max_daily_loss_pct))
+    def __post_init__(self) -> None:
+        self.max_daily_loss_pct = _env_float("MAX_DAILY_LOSS_PCT", self.max_daily_loss_pct)
+        self.max_leverage = _env_int("MAX_LEVERAGE", self.max_leverage)
+        self.default_sl_pct = _env_float("DEFAULT_SL_PCT", self.default_sl_pct)
+        self.tp1_pct = _env_float("TP1_PCT", self.tp1_pct)
+        self.tp2_pct = _env_float("TP2_PCT", self.tp2_pct)
+        self.compounding_rate = _env_float("COMPOUNDING_RATE", self.compounding_rate)
+        self.max_position_pct = _env_float("MAX_POSITION_PCT", self.max_position_pct)
+        self.breakeven_pct = _env_float("BREAKEVEN_PCT", self.breakeven_pct)
+        self.trailing_activation_pct = _env_float(
+            "TRAILING_ACTIVATION_PCT",
+            self.trailing_activation_pct,
         )
-        self.max_leverage = int(os.getenv("MAX_LEVERAGE", str(self.max_leverage)))
-        self.default_sl_pct = float(
-            os.getenv("DEFAULT_SL_PCT", str(self.default_sl_pct))
-        )
-        self.tp1_pct = float(os.getenv("TP1_PCT", str(self.tp1_pct)))
-        self.tp2_pct = float(os.getenv("TP2_PCT", str(self.tp2_pct)))
-        self.compounding_rate = float(
-            os.getenv("COMPOUNDING_RATE", str(self.compounding_rate))
-        )
-        self.max_position_pct = float(
-            os.getenv("MAX_POSITION_PCT", str(self.max_position_pct))
-        )
-        self.breakeven_pct = float(
-            os.getenv("BREAKEVEN_PCT", str(self.breakeven_pct))
-        )
-        self.trailing_activation_pct = float(
-            os.getenv("TRAILING_ACTIVATION_PCT", str(self.trailing_activation_pct))
-        )
-        self.binance_maker_fee = float(
-            os.getenv("BINANCE_MAKER_FEE", str(self.binance_maker_fee))
-        )
-        self.binance_taker_fee = float(
-            os.getenv("BINANCE_TAKER_FEE", str(self.binance_taker_fee))
-        )
-        self.bybit_maker_fee = float(
-            os.getenv("BYBIT_MAKER_FEE", str(self.bybit_maker_fee))
-        )
-        self.bybit_taker_fee = float(
-            os.getenv("BYBIT_TAKER_FEE", str(self.bybit_taker_fee))
-        )
+        self.binance_maker_fee = _env_float("BINANCE_MAKER_FEE", self.binance_maker_fee)
+        self.binance_taker_fee = _env_float("BINANCE_TAKER_FEE", self.binance_taker_fee)
+        self.bybit_maker_fee = _env_float("BYBIT_MAKER_FEE", self.bybit_maker_fee)
+        self.bybit_taker_fee = _env_float("BYBIT_TAKER_FEE", self.bybit_taker_fee)
 
 
 @dataclass
@@ -135,30 +167,20 @@ class TradingConfig:
     leverage_hunter: int = 5
     leverage_farmer: int = 3
 
-    def __post_init__(self):
-        symbols_env = os.getenv("TRADING_SYMBOLS", "")
-        if symbols_env:
-            self.symbols = [s.strip() for s in symbols_env.split(",") if s.strip()]
+    def __post_init__(self) -> None:
+        symbols_env = os.getenv("TRADING_SYMBOLS")
+        if symbols_env and symbols_env.strip():
+            self.symbols = [
+                s.strip() for s in symbols_env.split(",") if s.strip()
+            ]
 
-        self.timeframe = os.getenv("TRADING_TIMEFRAME", self.timeframe)
-        self.min_confidence_sniper = float(
-            os.getenv("MIN_CONFIDENCE_SNIPER", str(self.min_confidence_sniper))
-        )
-        self.min_confidence_hunter = float(
-            os.getenv("MIN_CONFIDENCE_HUNTER", str(self.min_confidence_hunter))
-        )
-        self.min_confidence_farmer = float(
-            os.getenv("MIN_CONFIDENCE_FARMER", str(self.min_confidence_farmer))
-        )
-        self.leverage_sniper = int(
-            os.getenv("LEVERAGE_SNIPER", str(self.leverage_sniper))
-        )
-        self.leverage_hunter = int(
-            os.getenv("LEVERAGE_HUNTER", str(self.leverage_hunter))
-        )
-        self.leverage_farmer = int(
-            os.getenv("LEVERAGE_FARMER", str(self.leverage_farmer))
-        )
+        self.timeframe = _env_text("TRADING_TIMEFRAME", self.timeframe)
+        self.min_confidence_sniper = _env_float("MIN_CONFIDENCE_SNIPER", self.min_confidence_sniper)
+        self.min_confidence_hunter = _env_float("MIN_CONFIDENCE_HUNTER", self.min_confidence_hunter)
+        self.min_confidence_farmer = _env_float("MIN_CONFIDENCE_FARMER", self.min_confidence_farmer)
+        self.leverage_sniper = _env_int("LEVERAGE_SNIPER", self.leverage_sniper)
+        self.leverage_hunter = _env_int("LEVERAGE_HUNTER", self.leverage_hunter)
+        self.leverage_farmer = _env_int("LEVERAGE_FARMER", self.leverage_farmer)
 
 
 @dataclass
