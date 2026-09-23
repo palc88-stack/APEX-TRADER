@@ -1,39 +1,27 @@
 # ======================================
-# APEX TRADER - Compatible Dependencies
-# Python: 3.11
+# APEX TRADER - Python 3.11
 # ======================================
 
-# Exchange APIs
 ccxt==4.2.25
 
-# HTTP & WebSocket
 aiohttp==3.9.1
 requests==2.31.0
 httpx==0.25.2
 
-# Technical Analysis
 pandas==2.1.4
 numpy==1.26.2
 
-# Database
 supabase==2.6.0
 
-# Telegram
-python-telegram-bot==20.7
-
-# Cache
 redis==5.0.1
 
-# Security
 python-dotenv==1.0.0
 cryptography==41.0.7
 
-# Utilities
 loguru==0.7.2
 pydantic==2.5.3
 schedule==1.2.1
 
-# CI tests
 pytest==8.3.5
 pytest-asyncio==0.24.0
 pytest-timeout==2.3.1
