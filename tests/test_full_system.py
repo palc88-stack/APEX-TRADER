@@ -155,11 +155,10 @@ class TestFeeCalculatorAccuracy:
         # حجم صفقة حقيقي
         position_value = 1000.0
 
-                result = calc.calculate(
+        result = calc.calculate(
             position_size=position_value,
             entry_type="taker",
             exit_type="taker"
-        
         )
 
         # 0.04% * 2 = 0.08% إجمالي
