@@ -6,10 +6,6 @@
 ccxt==4.2.25
 
 # HTTP & WebSocket
-# httpx as a range (not a hard pin) so pip's resolver can satisfy
-# both python-telegram-bot==20.6 (requires httpx<0.26) and the
-# httpx sub-dependencies pulled in transitively by supabase==2.3.0
-# (postgrest / gotrue / realtime / storage3).
 aiohttp==3.9.1
 requests==2.31.0
 httpx>=0.24.0,<0.26.0
