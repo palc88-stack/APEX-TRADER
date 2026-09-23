@@ -236,7 +236,7 @@ class StateManager:
             return None
 
     # ==========================================
-    # Open Positions Recovery (جديد)
+    # Open Positions Recovery
     # ==========================================
 
     async def get_open_positions_from_db(self) -> List[Position]:
@@ -252,8 +252,7 @@ class StateManager:
         ملاحظة: حالة Trailing Stop / Break Even التفصيلية غير
         محفوظة في جدول trades حالياً، فبعد إعادة البناء ستبدأ
         هذه الصفقات من منطق SL الأصلي وتُعاد بناء الـ Trailing
-        تدريجياً حسب حركة السعر التالية - وهذا أفضل بكثير من
-        فقدان تتبع الصفقة بالكامل.
+        تدريجياً حسب حركة السعر التالية.
         """
         if not self._db_available:
             logger.warning(
