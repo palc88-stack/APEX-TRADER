@@ -292,6 +292,13 @@ class ApexTrader:
                     )
                 )
 
+                # ✅ حفظ حالة Trailing/Break-even/TP1 في كل دورة
+                # حتى لو لم يُتخذ أي إجراء إغلاق — بدون هذا تُفقد
+                # الحماية المُكتسبة عند التشغيلة التالية.
+                await self.state_manager.update_position_state(
+                    position
+                )
+
                 if not action:
                     continue
 
@@ -613,6 +620,12 @@ class ApexTrader:
 
             position.size_usd *= (
                 1 - percentage / 100
+            )
+
+            # ✅ احفظ الحجم الجديد وحالة tp1_executed فوراً حتى لا
+            # يتكرر هذا الإغلاق الجزئي في الدورة القادمة (كل 10 دقائق)
+            await self.state_manager.update_position_state(
+                position
             )
 
             await self.notifier.send_partial_close(
