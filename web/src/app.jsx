@@ -21,10 +21,15 @@ const supabase =
     : null;
 
 function formatMoney(value) {
-  if (value === null || value === undefined || value === "") return "—";
+  if (value === null || value === undefined || value === "") {
+    return "—";
+  }
 
   const number = Number(value);
-  if (!Number.isFinite(number)) return "—";
+
+  if (!Number.isFinite(number)) {
+    return "—";
+  }
 
   return new Intl.NumberFormat("en-US", {
     minimumFractionDigits: 2,
@@ -33,10 +38,15 @@ function formatMoney(value) {
 }
 
 function formatDate(value) {
-  if (!value) return "—";
+  if (!value) {
+    return "—";
+  }
 
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "—";
+
+  if (Number.isNaN(date.getTime())) {
+    return "—";
+  }
 
   return date.toLocaleString("ar", {
     dateStyle: "medium",
@@ -100,7 +110,7 @@ function LoginForm() {
 
         {error && <div className="error-banner">{error}</div>}
 
-        <button className="primary-button" disabled={busy}>
+        <button className="primary-button" disabled={busy} type="submit">
           {busy ? "جارٍ التحقق..." : "دخول آمن"}
         </button>
       </form>
@@ -126,17 +136,17 @@ function MetricCard({ title, value, detail, icon: Icon, tone = "" }) {
 
 function ServiceRow({ title, value }) {
   const known = typeof value === "boolean";
-  const statusText = value
-    ? "متصل"
-    : known
-      ? "غير متصل"
-      : "غير معروف";
 
-  const dotClass = value
-    ? "ok"
-    : known
-      ? "bad"
-      : "unknown";
+  let statusText = "غير معروف";
+  let dotClass = "unknown";
+
+  if (value === true) {
+    statusText = "متصل";
+    dotClass = "ok";
+  } else if (known) {
+    statusText = "غير متصل";
+    dotClass = "bad";
+  }
 
   return (
     <div className="service-row">
@@ -154,11 +164,12 @@ function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [resultFilter, setResultFilter] = useState("all");
+  const [now, setNow] = useState(Date.now());
 
   const loadData = useCallback(async () => {
-    if (!supabase) return;
-
-    setError("");
+    if (!supabase) {
+      return;
+    }
 
     const [statusResult, tradesResult] = await Promise.all([
       supabase
@@ -181,23 +192,20 @@ function Dashboard() {
     const errors = [];
 
     if (statusResult.error) {
-      errors.push(`حالة البوت: ${statusResult.error.message}`);
       setStatus(null);
+      errors.push(`حالة البوت: ${statusResult.error.message}`);
     } else {
       setStatus(statusResult.data);
     }
 
     if (tradesResult.error) {
-      errors.push(`الصفقات: ${tradesResult.error.message}`);
       setTrades([]);
+      errors.push(`الصفقات: ${tradesResult.error.message}`);
     } else {
       setTrades(tradesResult.data || []);
     }
 
-    if (errors.length > 0) {
-      setError(errors.join(" · "));
-    }
-
+    setError(errors.join(" · "));
     setLoading(false);
   }, []);
 
@@ -213,7 +221,7 @@ function Dashboard() {
           schema: "public",
           table: "bot_runtime_status",
         },
-        () => loadData()
+        loadData
       )
       .on(
         "postgres_changes",
@@ -222,11 +230,16 @@ function Dashboard() {
           schema: "public",
           table: "trades",
         },
-        () => loadData()
+        loadData
       )
       .subscribe();
 
+    const timer = window.setInterval(() => {
+      setNow(Date.now());
+    }, 30000);
+
     return () => {
+      window.clearInterval(timer);
       supabase.removeChannel(channel);
     };
   }, [loadData]);
@@ -242,22 +255,27 @@ function Dashboard() {
     );
 
     return closedTrades.filter((trade) => {
+      const symbol = String(trade.symbol || "").toLowerCase();
       const matchesSearch =
-        !search ||
-        String(trade.symbol || "")
-          .toLowerCase()
-          .includes(search.toLowerCase());
+        search.length === 0 || symbol.includes(search.toLowerCase());
 
       const pnl = Number(trade.pnl || 0);
 
-      const matchesResult =
-        resultFilter === "all" ||
-        (resultFilter === "wins" && pnl > 0) ||
-        (resultFilter === "losses" && pnl < 0);
+      let matchesResult = true;
+
+      if (resultFilter === "wins") {
+        matchesResult = pnl > 0;
+      } else if (resultFilter === "losses") {
+        matchesResult = pnl < 0;
+      }
 
       return matchesSearch && matchesResult;
     });
   }, [trades, search, resultFilter]);
+
+  if (loading) {
+    return <main className="page loading">جارٍ تحميل لوحة APEX...</main>;
+  }
 
   const heartbeatTimestamp = status?.heartbeat_at
     ? new Date(status.heartbeat_at).getTime()
@@ -266,10 +284,7 @@ function Dashboard() {
   const heartbeatAgeMinutes =
     heartbeatTimestamp === null
       ? null
-      : Math.max(
-          0,
-          Math.floor((Date.now() - heartbeatTimestamp) / 60000)
-        );
+      : Math.max(0, Math.floor((now - heartbeatTimestamp) / 60000));
 
   const stale =
     heartbeatAgeMinutes === null || heartbeatAgeMinutes > 15;
@@ -294,20 +309,6 @@ function Dashboard() {
     Number.isFinite(realizedPnl) && realizedPnl < 0
       ? "negative"
       : "positive";
-
-  if (!supabase) {
-    return (
-      <main className="page">
-        <div className="error-banner">
-          إعدادات Supabase غير موجودة. أضف متغيرات Vercel المطلوبة.
-        </div>
-      </main>
-    );
-  }
-
-  if (loading) {
-    return <main className="page loading">جارٍ تحميل لوحة APEX...</main>;
-  }
 
   return (
     <main className="page">
@@ -384,7 +385,7 @@ function Dashboard() {
 
       {status?.environment === "live" && (
         <div className="warning-banner">
-          تنبيه: هذه لوحة متابعة، وليست وسيلة حماية أو تنفيذ أوامر.
+          تنبيه: هذه لوحة متابعة وليست وسيلة حماية أو تنفيذ أوامر.
         </div>
       )}
 
@@ -409,7 +410,9 @@ function Dashboard() {
           }
           detail="للصفقات المغلقة المسجلة"
           icon={realizedPnl < 0 ? ArrowDownRight : ArrowUpRight}
-          tone={status?.daily_realized_pnl == null ? "" : realizedTone}
+          tone={
+            status?.daily_realized_pnl == null ? "" : realizedTone
+          }
         />
 
         <MetricCard
@@ -464,7 +467,7 @@ function Dashboard() {
                     <th>الدخول</th>
                     <th>وقف الخسارة</th>
                     <th>الرافعة</th>
-                    <th>P&amp;L</th>
+                    <th>الربح/الخسارة</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -512,9 +515,18 @@ function Dashboard() {
             </div>
           </div>
 
-          <ServiceRow title="Binance" value={status?.exchange_connected} />
-          <ServiceRow title="Supabase" value={status?.database_connected} />
-          <ServiceRow title="Redis" value={status?.redis_connected} />
+          <ServiceRow
+            title="Binance"
+            value={status?.exchange_connected}
+          />
+          <ServiceRow
+            title="Supabase"
+            value={status?.database_connected}
+          />
+          <ServiceRow
+            title="Redis"
+            value={status?.redis_connected}
+          />
 
           <div className="cycle">
             <Clock3 size={16} />
@@ -571,7 +583,6 @@ function Dashboard() {
                   <th>وقت الإغلاق</th>
                 </tr>
               </thead>
-
               <tbody>
                 {archivedTrades.map((trade) => (
                   <tr key={trade.id}>
@@ -586,3 +597,80 @@ function Dashboard() {
                     <td
                       className={
                         Number(trade.pnl) >= 0
+                          ? "text-positive"
+                          : "text-negative"
+                      }
+                    >
+                      {trade.pnl == null
+                        ? "—"
+                        : `$${formatMoney(trade.pnl)}`}
+                    </td>
+                    <td>{trade.close_reason || trade.status || "—"}</td>
+                    <td>{formatDate(trade.closed_at)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      <footer className="footer">
+        البيانات تعرض آخر ما حفظه البوت؛ حداثتها مرتبطة بتكرار تشغيله ونجاح المزامنة.
+      </footer>
+    </main>
+  );
+}
+
+export default function App() {
+  const [session, setSession] = useState(null);
+  const [authLoading, setAuthLoading] = useState(true);
+
+  useEffect(() => {
+    if (!supabase) {
+      setAuthLoading(false);
+      return undefined;
+    }
+
+    let active = true;
+
+    supabase.auth.getSession().then(({ data }) => {
+      if (active) {
+        setSession(data.session);
+        setAuthLoading(false);
+      }
+    });
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      setSession(nextSession);
+      setAuthLoading(false);
+    });
+
+    return () => {
+      active = false;
+      subscription.unsubscribe();
+    };
+  }, []);
+
+  if (!supabase) {
+    return (
+      <main className="page">
+        <div className="error-banner">
+          أضف VITE_SUPABASE_URL و VITE_SUPABASE_ANON_KEY في إعدادات Vercel.
+        </div>
+      </main>
+    );
+  }
+
+  if (authLoading) {
+    return <main className="page loading">جارٍ تحميل لوحة APEX...</main>;
+  }
+
+  if (!session) {
+    return <LoginForm />;
+  }
+
+  return <Dashboard />;
+}
