@@ -1,0 +1,3 @@
+# Vercel - Removed, using Cloudflare only
+.vercel
+vercel.json
