@@ -40,9 +40,9 @@ jobs:
           test -f bot/data/market_data.py
           test -f requirements.txt
           python -m compileall -q bot tests
-          python -c \'from bot.config import config; print("enabled exchanges:", config.exchange.enabled_exchanges())\'
-          python -c \'from bot.core.exchange import ExchangeManager; print("ExchangeManager import OK")\'
-          python -c \'from bot.data.market_data import MarketDataManager; print("MarketDataManager import OK")\'
+          python -c "from bot.config import config; print('enabled exchanges:', config.exchange.enabled_exchanges())"
+          python -c "from bot.core.exchange import ExchangeManager; print('ExchangeManager import OK')"
+          python -c "from bot.data.market_data import MarketDataManager; print('MarketDataManager import OK')"
 
       - name: Run tests
         env:
@@ -55,7 +55,7 @@ jobs:
           UPSTASH_REDIS_TOKEN: ${{ secrets.UPSTASH_REDIS_TOKEN }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: python -m pytest tests/ -x -q --timeout=30 -k "not test_real_balance and not test_real_ohlcv_data and not test_signal_engine_no_mock and not test_indicators_output_validity and not test_all_prices_from_api and not test_real_ticker"
+        run: python -m pytest tests/ -x -q --timeout=30 -k "not test_real_balance and not test_real_ohlcv_data and not test_signal_engine_no_mock and not test_indicators_output_validity and not test_real_balance" 
 
       - name: Run Bot Cycle
         env:
