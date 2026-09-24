@@ -43,12 +43,32 @@ CREATE TABLE IF NOT EXISTS trades (
     opened_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     closed_at TIMESTAMPTZ,
     duration_minutes DECIMAL(8, 2),
-    
+
+    -- ✅ حالة إدارة الصفقة الديناميكية (Trailing / Break Even / TP1)
+    -- ضرورية لأن البوت يعمل كعملية GitHub Actions مستقلة كل دورة،
+    -- وبدون هذه الأعمدة تُفقد هذه الحالة بين كل تشغيلتين متتاليتين.
+    tp1_executed BOOLEAN NOT NULL DEFAULT FALSE,
+    trailing_active BOOLEAN NOT NULL DEFAULT FALSE,
+    trailing_stop DECIMAL(20, 8) NOT NULL DEFAULT 0,
+    breakeven_set BOOLEAN NOT NULL DEFAULT FALSE,
+    highest_price DECIMAL(20, 8) NOT NULL DEFAULT 0,
+    lowest_price DECIMAL(20, 8) NOT NULL DEFAULT 0,
+
     -- الفهارس
     CONSTRAINT trades_pnl_check CHECK (
         status = 'OPEN' OR pnl IS NOT NULL
     )
 );
+
+-- ===== Migration: لقواعد بيانات منشأة قبل هذا التحديث =====
+-- شغّل هذه الأوامر يدوياً إن كان جدول trades موجوداً مسبقاً بدون هذه الأعمدة.
+-- (لا تُنفَّذ تلقائياً لأن CREATE TABLE IF NOT EXISTS أعلاه لن يعدّل جدولاً موجوداً)
+ALTER TABLE trades ADD COLUMN IF NOT EXISTS tp1_executed BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE trades ADD COLUMN IF NOT EXISTS trailing_active BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE trades ADD COLUMN IF NOT EXISTS trailing_stop DECIMAL(20, 8) NOT NULL DEFAULT 0;
+ALTER TABLE trades ADD COLUMN IF NOT EXISTS breakeven_set BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE trades ADD COLUMN IF NOT EXISTS highest_price DECIMAL(20, 8) NOT NULL DEFAULT 0;
+ALTER TABLE trades ADD COLUMN IF NOT EXISTS lowest_price DECIMAL(20, 8) NOT NULL DEFAULT 0;
 
 -- ===== جدول الأداء اليومي =====
 CREATE TABLE IF NOT EXISTS daily_performance (
