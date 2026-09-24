@@ -658,7 +658,7 @@ export default function App() {
     return (
       <main className="page">
         <div className="error-banner">
-          أضف VITE_SUPABASE_URL و VITE_SUPABASE_ANON_KEY في إعدادات Vercel.
+          أضف VITE_SUPABASE_URL و VITE_SUPABASE_ANON_KEY في إعدادات Cloudflare Pages.
         </div>
       </main>
     );
