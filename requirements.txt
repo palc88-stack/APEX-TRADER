@@ -3,13 +3,14 @@
 # ======================================
 
 ccxt==4.2.25
+binance-sdk-derivatives-trading-usds-futures
 
 aiohttp==3.9.1
 requests==2.31.0
 httpx==0.27.2
 
 pandas==2.1.4
-numpy==1.26.2
+numpy==2.1.4
 
 supabase==2.6.0
 
