@@ -40,9 +40,9 @@ jobs:
           test -f bot/data/market_data.py
           test -f requirements.txt
           python -m compileall -q bot tests
-          python -c "from bot.config import config; print(\'enabled exchanges:\', config.exchange.enabled_exchanges())"
-          python -c "from bot.core.exchange import ExchangeManager; print(\'ExchangeManager import OK\')"
-          python -c "from bot.data.market_data import MarketDataManager; print(\'MarketDataManager import OK\')"
+          python -c \'from bot.config import config; print("enabled exchanges:", config.exchange.enabled_exchanges())\'
+          python -c \'from bot.core.exchange import ExchangeManager; print("ExchangeManager import OK")\'
+          python -c \'from bot.data.market_data import MarketDataManager; print("MarketDataManager import OK")\'
 
       - name: Run tests
         env:
