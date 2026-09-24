@@ -50,7 +50,7 @@ jobs:
           TRADING_EXCHANGES: binance
           BINANCE_API_KEY: ${{ secrets.BINANCE_API_KEY }}
           BINANCE_SECRET_KEY: ${{ secrets.BINANCE_SECRET_KEY }}
-          BINANCE_TESTNET: "true"
+          BINANCE_TESTNET: ${{ secrets.BINANCE_TESTNET }}
         run: |
           test -f bot/__init__.py
           test -f bot/config.py
@@ -70,7 +70,7 @@ jobs:
           TRADING_EXCHANGES: binance
           BINANCE_API_KEY: ${{ secrets.BINANCE_API_KEY }}
           BINANCE_SECRET_KEY: ${{ secrets.BINANCE_SECRET_KEY }}
-          BINANCE_TESTNET: "true"
+          BINANCE_TESTNET: ${{ secrets.BINANCE_TESTNET }}
 
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
@@ -92,7 +92,7 @@ jobs:
           TRADING_EXCHANGES: binance
           BINANCE_API_KEY: ${{ secrets.BINANCE_API_KEY }}
           BINANCE_SECRET_KEY: ${{ secrets.BINANCE_SECRET_KEY }}
-          BINANCE_TESTNET: "true"
+          BINANCE_TESTNET: ${{ secrets.BINANCE_TESTNET }}
 
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
