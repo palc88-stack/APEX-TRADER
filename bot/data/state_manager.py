@@ -249,10 +249,9 @@ class StateManager:
         هذه الدالة تُستدعى في بداية كل دورة لإعادة ملء
         PositionManager بالحالة الحقيقية قبل مراجعة الصفقات.
 
-        ملاحظة: حالة Trailing Stop / Break Even التفصيلية غير
-        محفوظة في جدول trades حالياً، فبعد إعادة البناء ستبدأ
-        هذه الصفقات من منطق SL الأصلي وتُعاد بناء الـ Trailing
-        تدريجياً حسب حركة السعر التالية.
+        ✅ يستعيد أيضاً حالة Trailing Stop / Break Even / TP1
+        الكاملة من الأعمدة المخصصة في جدول trades، حتى لا تُفقد
+        هذه الحماية بين كل تشغيلتين متتاليتين لـ GitHub Actions.
         """
         if not self._db_available:
             logger.warning(
@@ -298,8 +297,37 @@ class StateManager:
                         exit_fee=float(row.get("exit_fee") or 0),
                         opened_at=opened_at,
                     )
-                    position.highest_price = position.entry_price
-                    position.lowest_price = position.entry_price
+
+                    # ✅ استعادة حالة إدارة الصفقة الديناميكية
+                    position.tp1_executed = bool(
+                        row.get("tp1_executed", False)
+                    )
+                    position.trailing_active = bool(
+                        row.get("trailing_active", False)
+                    )
+                    position.trailing_stop = float(
+                        row.get("trailing_stop") or 0
+                    )
+                    position.breakeven_set = bool(
+                        row.get("breakeven_set", False)
+                    )
+
+                    saved_high = float(
+                        row.get("highest_price") or 0
+                    )
+                    saved_low = float(
+                        row.get("lowest_price") or 0
+                    )
+                    position.highest_price = (
+                        saved_high
+                        if saved_high > 0
+                        else position.entry_price
+                    )
+                    position.lowest_price = (
+                        saved_low
+                        if saved_low > 0
+                        else position.entry_price
+                    )
 
                     positions.append(position)
 
@@ -379,7 +407,15 @@ class StateManager:
                 "status": "OPEN",
                 "opened_at": (
                     position.opened_at.isoformat()
-                )
+                ),
+
+                # ✅ حالة إدارة الصفقة الديناميكية (قيم ابتدائية)
+                "tp1_executed": False,
+                "trailing_active": False,
+                "trailing_stop": 0,
+                "breakeven_set": False,
+                "highest_price": float(position.entry_price),
+                "lowest_price": float(position.entry_price),
             }
 
             self._supabase.table("trades").insert(
@@ -397,6 +433,46 @@ class StateManager:
 
         except Exception as e:
             logger.error(f"❌ خطأ حفظ الصفقة: {e}")
+            return False
+
+    async def update_position_state(
+        self,
+        position: Position
+    ) -> bool:
+        """
+        ✅ حفظ حالة إدارة الصفقة الديناميكية (Trailing / Break Even /
+        TP1 / الحجم المتبقي بعد إغلاق جزئي) في Supabase.
+
+        يجب استدعاء هذه الدالة في نهاية كل دورة لكل صفقة مفتوحة
+        (بعد update_price وبعد أي partial close)، وإلا فستُفقد هذه
+        الحالة عند التشغيلة التالية لأن GitHub Actions يبدأ عملية
+        جديدة تماماً كل مرة.
+        """
+        if not self._db_available:
+            return False
+
+        try:
+            update_data = {
+                "size_usd": float(position.size_usd),
+                "stop_loss": float(position.stop_loss),
+                "tp1_executed": bool(position.tp1_executed),
+                "trailing_active": bool(position.trailing_active),
+                "trailing_stop": float(position.trailing_stop or 0),
+                "breakeven_set": bool(position.breakeven_set),
+                "highest_price": float(position.highest_price),
+                "lowest_price": float(position.lowest_price),
+            }
+
+            self._supabase.table("trades").update(
+                update_data
+            ).eq("id", position.id).execute()
+
+            return True
+
+        except Exception as e:
+            logger.error(
+                f"❌ خطأ حفظ حالة الصفقة {position.id}: {e}"
+            )
             return False
 
     async def update_trade_closed(
