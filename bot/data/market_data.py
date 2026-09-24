@@ -173,6 +173,20 @@ class MarketDataManager:
                 .reset_index(drop=True)
             )
 
+            # ✅ إسقاط الشمعة الأخيرة إن كانت لا تزال قيد التكوّن
+            # (لم تُغلق بعد) لمنع استخدام مؤشرات فنية غير مستقرة
+            # (repainting) في توليد الإشارات.
+            dataframe = self._drop_unclosed_candle(
+                dataframe, timeframe
+            )
+
+            if dataframe.empty:
+                logger.warning(
+                    "⚠️ No closed OHLCV candles for {}",
+                    symbol,
+                )
+                return None
+
             if not self._validate_ohlcv(
                 dataframe,
                 symbol,
@@ -267,6 +281,47 @@ class MarketDataManager:
             return False
 
         return True
+
+    @staticmethod
+    def _timeframe_to_minutes(timeframe: str) -> int:
+        """يحوّل '5m'/'1h'/'1d' إلى عدد دقائق"""
+        try:
+            unit = timeframe[-1]
+            value = int(timeframe[:-1])
+            multipliers = {
+                "m": 1,
+                "h": 60,
+                "d": 1440,
+                "w": 10080,
+            }
+            return value * multipliers.get(unit, 1)
+        except (ValueError, IndexError):
+            return 5
+
+    def _drop_unclosed_candle(
+        self,
+        dataframe: pd.DataFrame,
+        timeframe: str,
+    ) -> pd.DataFrame:
+        """
+        يحذف آخر صف إن كانت شمعته لم تُغلق بعد (أي أن وقت
+        بدايتها + مدة الفريم الزمني لا يزال في المستقبل أو
+        الآن)، لتفادي حساب المؤشرات على بيانات متغيرة لحظياً.
+        """
+        if dataframe.empty:
+            return dataframe
+
+        minutes = self._timeframe_to_minutes(timeframe)
+        last_ts = dataframe.iloc[-1]["timestamp"]
+        candle_close_time = last_ts + pd.Timedelta(
+            minutes=minutes
+        )
+        now = pd.Timestamp.now(tz="UTC")
+
+        if candle_close_time > now:
+            return dataframe.iloc[:-1].reset_index(drop=True)
+
+        return dataframe
 
     def _get_from_cache(
         self,
