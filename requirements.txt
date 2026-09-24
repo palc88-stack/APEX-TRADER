@@ -1,5 +1,5 @@
 # ======================================
-# APEX TRADER - Python 3.13 Compatible
+# APEX TRADER - Python 3.11 & 3.13 Compatible
 # ======================================
 
 ccxt==4.4.87
