@@ -1,21 +1,43 @@
 # bot/core/risk_manager.py - الكود المُصحَّح
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Union
 from loguru import logger
 from bot.core.fee_calculator import FeeCalculator
 
 
 class RiskManager:
-    def __init__(self, config: Optional[Dict[str, Any]] = None):
+    def __init__(self, config: Optional[Union[Dict[str, Any], "Config"]] = None):
         self.config = config or {}
         self.fee_calculator = FeeCalculator(self.config)
-        self.max_risk_per_trade_pct = float(
-            getattr(getattr(config, "risk", None), "max_daily_loss_pct", None)
-            or self.config.get("max_risk_pct", 0.02)
-        )
-        self.max_leverage_allowed = int(
-            getattr(getattr(config, "risk", None), "max_leverage", None)
-            or self.config.get("max_leverage", 20)
-        )
+        # قراءة قيم المخاطر — تدعم كل من dict و Config object
+        if isinstance(self.config, dict):
+            self.max_risk_per_trade_pct = float(
+                self.config.get("max_risk_pct", 0.02)
+            )
+            self.max_leverage_allowed = int(
+                self.config.get("max_leverage", 20)
+            )
+        else:
+            # Config object — يقرأ من الـ nested RiskConfig
+            risk_cfg = getattr(self.config, "risk", None)
+            if risk_cfg is not None:
+                self.max_risk_per_trade_pct = float(
+                    getattr(risk_cfg, "max_daily_loss_pct", 0.02)
+                )
+                self.max_leverage_allowed = int(
+                    getattr(risk_cfg, "max_leverage", 20)
+                )
+            else:
+                # يَسقط إلى config.get() إذا كان Config يملكها
+                self.max_risk_per_trade_pct = float(
+                    getattr(self.config, "get", lambda k, d: d)(
+                        "max_risk_pct", 0.02
+                    )
+                )
+                self.max_leverage_allowed = int(
+                    getattr(self.config, "get", lambda k, d: d)(
+                        "max_leverage", 20
+                    )
+                )
 
     def check_risk_limits(
         self,

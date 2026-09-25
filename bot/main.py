@@ -42,14 +42,23 @@ class ApexTraderBot:
         self.fee_calculator = FeeCalculator(self.config)
         self.position_manager = PositionManager()
 
-        self.supabase_client: Client = create_client(
-            self.config.database.supabase_url,
-            self.config.database.supabase_key
-        )
+        self.supabase_client: Client = self._init_supabase()
         self.state_manager = StateManager(self.config)
         self.telegram = TelegramNotifier()
 
-    # ✅ إصلاح: Heartbeat عبر StateManager + جدول صحيح (bot_state)
+    def _init_supabase(self) -> Client:
+        try:
+            client = create_client(
+                self.config.database.supabase_url,
+                self.config.database.supabase_key
+            )
+            logger.info("✅ Supabase client initialized")
+            return client
+        except Exception as e:
+            logger.warning(f"⚠️ Supabase init failed (no valid keys): {e}")
+            return None
+
+    # ✅ إصلاح: Heartbeat عبر StateManager
     async def start_heartbeat_loop(self, interval_seconds: int = 10):
         """إرسال نبضات دورية عبر StateManager - لا كتابة مباشرة لـ Supabase."""
         logger.info("💗 بدء حلقة Heartbeat...")

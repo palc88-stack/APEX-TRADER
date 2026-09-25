@@ -35,23 +35,27 @@ class ExchangeManager:
 
     def _init_exchange(self, is_testnet: bool) -> None:
         try:
-            self._exchange = ccxt.binanceusdm({
-                "apiKey": self.api_key,
-                "secret": self.secret_key,
+            exchange_params: Dict[str, Any] = {
                 "enableRateLimit": True,
                 "timeout": 15000,
                 "options": {
                     "defaultType": "future",
                     "adjustForTimeDifference": True,
                 },
-            })
+            }
+            # تمرير المفاتيح فقط إذا كانت موجودة فعلاً
+            if self.api_key and self.secret_key:
+                exchange_params["apiKey"] = self.api_key
+                exchange_params["secret"] = self.secret_key
+            self._exchange = ccxt.binanceusdm(exchange_params)
             if is_testnet:
                 self._exchange.set_sandbox_mode(True)
-                logger.info("🧪 Exchange: Binance Futures Testnet")
+                logger.info("🧪 Exchange: Binance Futures Testnet (no API keys — public data only)")
             else:
                 logger.info("🚀 Exchange: Binance Futures Live")
         except Exception as e:
             logger.error("❌ Exchange init failed: {}", e)
+            self._exchange = None
 
     # ─── Data ─────────────────────────────────────────────────────────────────
 

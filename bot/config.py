@@ -94,8 +94,8 @@ class ExchangeConfig:
 
 @dataclass
 class DatabaseConfig:
-    supabase_url: str = field(default_factory=lambda: _env_text("SUPABASE_URL"))
-    supabase_key: str = field(default_factory=lambda: _env_text("SUPABASE_KEY"))
+    supabase_url: str = field(default_factory=lambda: _env_text("SUPABASE_URL", "https://placeholder.supabase.co"))
+    supabase_key: str = field(default_factory=lambda: _env_text("SUPABASE_KEY", "placeholder-key"))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -136,7 +136,8 @@ class TradingConfig:
             s.strip().upper()
             for s in _env_text("TRADING_SYMBOLS", "BTC/USDT").split(",")
             if s.strip()
-        ] or ["BTC/USDT"]
+        ]
+        or ["BTC/USDT"]
     )
     timeframe: str = field(default_factory=lambda: _env_text("TRADING_TIMEFRAME", "5m"))
 
@@ -156,6 +157,23 @@ class Config:
     initial_balance: float = field(default_factory=lambda: _env_float("INITIAL_BALANCE", 100.0))
     active_mode: str = field(default_factory=lambda: _env_text("ACTIVE_MODE", "HUNTER").upper())
     environment: str = field(default_factory=lambda: _env_text("ENVIRONMENT", "testnet"))
+
+    # ── Methods for backward compatibility with config.get(key) pattern ──
+    def get(self, key: str, default: str = "") -> str:
+        """إرجاع قيمة متغير البيئة — للتوافق مع الكود الذي يستخدم config.get(key)"""
+        return os.getenv(key, default)
+
+    def get_bool(self, key: str, default: bool = True) -> bool:
+        """إرجاع قيمة منطقية من متغير البيئة"""
+        raw = os.getenv(key)
+        if raw is None:
+            return default
+        raw = raw.strip().lower()
+        if raw in ("1", "true", "yes", "on"):
+            return True
+        if raw in ("0", "false", "no", "off"):
+            return False
+        return default
 
 
 # ── Module-level instance للاستيراد المباشر (market_data.py و telegram_notifier.py يستخدمانه) ──

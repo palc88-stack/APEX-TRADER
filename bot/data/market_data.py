@@ -30,18 +30,18 @@ class MarketDataManager:
 
     def _init_exchange(self) -> None:
         if self._exchange_name == "binance":
-            self._exchange = ccxt.binanceusdm(
-                {
-                    "apiKey": config.exchange.binance_api_key,
-                    "secret": config.exchange.binance_secret_key,
-                    "enableRateLimit": True,
-                    "timeout": 15000,
-                    "options": {
-                        "defaultType": "future",
-                        "adjustForTimeDifference": True,
-                    },
-                }
-            )
+            exchange_params: Dict[str, Any] = {
+                "enableRateLimit": True,
+                "timeout": 15000,
+                "options": {
+                    "defaultType": "future",
+                    "adjustForTimeDifference": True,
+                },
+            }
+            if config.exchange.binance_api_key and config.exchange.binance_secret_key:
+                exchange_params["apiKey"] = config.exchange.binance_api_key
+                exchange_params["secret"] = config.exchange.binance_secret_key
+            self._exchange = ccxt.binanceusdm(exchange_params)
 
             if config.exchange.binance_testnet:
                 self._exchange.set_sandbox_mode(True)
@@ -53,18 +53,18 @@ class MarketDataManager:
             return
 
         if self._exchange_name == "bybit":
-            self._exchange = ccxt.bybit(
-                {
-                    "apiKey": config.exchange.bybit_api_key,
-                    "secret": config.exchange.bybit_secret_key,
-                    "enableRateLimit": True,
-                    "timeout": 15000,
-                    "options": {
-                        "defaultType": "linear",
-                        "adjustForTimeDifference": True,
-                    },
-                }
-            )
+            exchange_params: Dict[str, Any] = {
+                "enableRateLimit": True,
+                "timeout": 15000,
+                "options": {
+                    "defaultType": "linear",
+                    "adjustForTimeDifference": True,
+                },
+            }
+            if config.exchange.bybit_api_key and config.exchange.bybit_secret_key:
+                exchange_params["apiKey"] = config.exchange.bybit_api_key
+                exchange_params["secret"] = config.exchange.bybit_secret_key
+            self._exchange = ccxt.bybit(exchange_params)
 
             if config.exchange.bybit_testnet:
                 self._exchange.set_sandbox_mode(True)

@@ -1,6 +1,6 @@
 # bot/signals/filters.py - الكود المُصحَّح
 import pandas as pd
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Union
 from loguru import logger
 
 
@@ -10,17 +10,25 @@ class SignalFilters:
     - عتبات RSI متوافقة مع signal_engine
     - فلتر Volume نسبي (يعتمد على متوسط الحجم لا قيمة ثابتة)
     - إضافة فلتر MACD للتأكيد
+    - متوافق مع كلاً من Dict config و Config dataclass object
     """
 
-    def __init__(self, config: Optional[Dict[str, Any]] = None):
-        self.config = config or {}
-        # ✅ توحيد العتبات مع signal_engine:
-        # BUY عند rsi < 40 → max_rsi_buy يجب أن يكون >= 40
-        self.max_rsi_buy = float(self.config.get("max_rsi_buy", 42.0))
-        # SELL عند rsi > 60 → min_rsi_sell يجب أن يكون <= 60
-        self.min_rsi_sell = float(self.config.get("min_rsi_sell", 58.0))
-        # ✅ نسبة الحجم: الشمعة الحالية >= X ضعف متوسط الحجم
-        self.min_volume_ratio = float(self.config.get("min_volume_ratio", 0.5))
+    def __init__(self, config: Optional[Union[Dict[str, Any], "Config"]] = None):
+        self.config = config
+        # قراءة عتبات الفلاتر — تدعم كل من dict و Config object
+        if config is None:
+            self.max_rsi_buy = 42.0
+            self.min_rsi_sell = 58.0
+            self.min_volume_ratio = 0.5
+        elif isinstance(config, dict):
+            self.max_rsi_buy = float(config.get("max_rsi_buy", 42.0))
+            self.min_rsi_sell = float(config.get("min_rsi_sell", 58.0))
+            self.min_volume_ratio = float(config.get("min_volume_ratio", 0.5))
+        else:
+            # Config dataclass object — يستخدم config.get() التي تقرأ من env vars
+            self.max_rsi_buy = float(config.get("max_rsi_buy", 42.0))
+            self.min_rsi_sell = float(config.get("min_rsi_sell", 58.0))
+            self.min_volume_ratio = float(config.get("min_volume_ratio", 0.5))
 
     def validate_signal(
         self,
