@@ -78,14 +78,6 @@ def _env_int(name: str, default: int) -> int:
 class ExchangeConfig:
     """
     إعدادات جميع منصات التداول.
-
-    تجربة Binance الحالية:
-        TRADING_EXCHANGES=binance
-
-    تشغيل المنصتين مستقبلاً:
-        TRADING_EXCHANGES=binance,bybit
-
-    لا تعتبر المنصة مفعلة إلا عند وجود API Key و Secret Key.
     """
 
     trading_exchanges: List[str] = field(
@@ -459,6 +451,11 @@ class AppConfig:
         self.telegram = TelegramConfig()
         self.risk = RiskConfig()
         self.trading = TradingConfig()
+
+
+# === حل مشكلة الاستيراد في main.py عبر توفير Config كـ Alias لـ AppConfig ===
+class Config(AppConfig):
+    pass
 
 
 config = AppConfig()
