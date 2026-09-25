@@ -24,28 +24,22 @@ class IndicatorCalculator:
             return df
 
         try:
-            # التحقق من وجود أعمدة الشموع الأساسية
             required_columns = ['open', 'high', 'low', 'close', 'volume']
             for col in required_columns:
                 if col not in df.columns:
                     logger.error("❌ العمود الأساسي مفقود في البيانات الحية: {}", col)
                     return df
 
-            # حساب المتوسطات المتحركة الأسية والبسيطة الحقيقية
             df['sma_20'] = self.calculate_sma(df, period=20)
             df['ema_50'] = self.calculate_ema(df, period=50)
             df['ema_200'] = self.calculate_ema(df, period=200)
-
-            # مؤشر القوة النسبية الحقيقي (RSI)
             df['rsi'] = self.calculate_rsi(df, period=14)
 
-            # مؤشر الماكد الحقيقي (MACD)
             macd, signal, hist = self.calculate_macd(df)
             df['macd'] = macd
             df['macd_signal'] = signal
             df['macd_hist'] = hist
 
-            # حدود بولنجر باند الحقيقية (Bollinger Bands)
             upper, middle, lower = self.calculate_bollinger_bands(df)
             df['bb_upper'] = upper
             df['bb_middle'] = middle
@@ -72,13 +66,11 @@ class IndicatorCalculator:
         delta = close.diff()
         gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
         loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
-        
-        # تجنب القسمة على صفر باستخدام قيمة رياضية دقيقة
         rs = gain / (loss + 1e-12)
         return 100 - (100 / (1 + rs))
 
     @staticmethod
-    def calculate_macd(df: pd.DataFrame, fast: int = 12, slow: int = 26, signal_period: int = 9) -> Tuple[pd.Series, pd.Series, pd.Series]:
+    def calculate_macd(df: pd.DataFrame, fast: int, slow: int, signal_period: int) -> Tuple[pd.Series, pd.Series, pd.Series]:
         close = df['close']
         exp1 = close.ewm(span=fast, adjust=False).mean()
         exp2 = close.ewm(span=slow, adjust=False).mean()
@@ -95,3 +87,8 @@ class IndicatorCalculator:
         upper = middle + (std * std_dev)
         lower = middle - (std * std_dev)
         return upper, middle, lower
+
+
+# === توافق تام مع أي استيراد يبحث عن TechnicalIndicators ===
+class TechnicalIndicators(IndicatorCalculator):
+    pass
