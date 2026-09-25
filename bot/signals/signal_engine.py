@@ -13,6 +13,11 @@ class TradeDirection(str, Enum):
     HOLD = "HOLD"
 
 
+class TradingMode(str, Enum):
+    LIVE = "LIVE"
+    TESTNET = "TESTNET"
+
+
 class TradeSignal:
     """
     نموذج كلاس إشارة التداول الحقيقية المتكاملة لمنظومة (Apex Trader).
