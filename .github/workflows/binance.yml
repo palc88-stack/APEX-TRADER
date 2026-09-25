@@ -94,6 +94,22 @@ jobs:
           APEX_RUN_CYCLES: "1"
         run: python -m bot.main
 
+      - name: Diagnostic Supabase connectivity
+        if: always()  # يعمل سواء النجاح أو الفشل
+        run: |
+          python bot/tests/diagnostic_supabase.py > diagnostic_output.json 2>&1 || true
+          echo "=== Diagnostic Output ==="
+          cat diagnostic_output.json
+          echo "============================="
+
+      - name: Upload diagnostic artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: supabase-diagnostic
+          path: diagnostic_output.json
+          if-no-files-found: ignore
+
       - name: Upload logs on failure
         if: ${{ failure() }}
         uses: actions/upload-artifact@v4
