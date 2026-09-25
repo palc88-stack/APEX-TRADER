@@ -62,11 +62,13 @@ class StateManager:
             return
         try:
             now_utc = datetime.now(timezone.utc).isoformat()
-            self.client.table("bot_state").update({
+            # ✅ استخدام upsert لضمان وجود الصف حتى لو لم يُدرج مسبقاً
+            self.client.table("bot_state").upsert({
+                "id": 1,
                 "is_running": True,
                 "last_run_at": now_utc,
                 "updated_at": now_utc,
-            }).eq("id", 1).execute()
+            }).execute()
             logger.debug("💓 Heartbeat: {}", now_utc)
         except Exception as e:
             logger.error("❌ update_heartbeat: {}", e)
@@ -85,6 +87,7 @@ class StateManager:
             return
         try:
             updates: Dict[str, Any] = {
+                "id": 1,  # ✅ إضافة id لضمان upsert يعمل حتى بدون INSERT مسبق
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             }
             if balance is not None:
@@ -95,7 +98,8 @@ class StateManager:
                 updates["daily_realized_pnl"] = round(daily_realized_pnl, 2)
             if daily_loss_limit is not None:
                 updates["daily_loss_limit_usd"] = round(daily_loss_limit, 2)
-            self.client.table("bot_state").update(updates).eq("id", 1).execute()
+            # ✅ استخدام upsert بدلاً من update — يضمن وجود الصف
+            self.client.table("bot_state").upsert(updates).execute()
             logger.debug("📊 Bot status updated: balance={}, loss_used={}, pnl={}",
                          updates.get("current_balance"),
                          updates.get("daily_loss_used_usd"),
@@ -109,10 +113,12 @@ class StateManager:
             return
         try:
             now_utc = datetime.now(timezone.utc).isoformat()
-            self.client.table("bot_state").update({
+            # ✅ استخدام upsert بدلاً من update
+            self.client.table("bot_state").upsert({
+                "id": 1,
                 "is_running": False,
                 "updated_at": now_utc
-            }).eq("id", 1).execute()
+            }).execute()
             logger.info("🛑 Bot marked as stopped in DB")
         except Exception as e:
             logger.error("❌ mark_bot_stopped: {}", e)

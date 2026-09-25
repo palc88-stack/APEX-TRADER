@@ -96,17 +96,29 @@ class ApexTraderBot:
     async def initialize(self) -> None:
         logger.info("Initializing ApexTrader...")
         await self.state_manager.load_initial_state()
+
+        # ✅ فحص اتصال Supabase - إذا فشل، نكتب في واجهة مستقلة
         balance = await self.exchange.get_balance()
         self._daily_loss_limit = (
             float(self.config.risk.max_daily_loss_pct or 0.02)
-            * balance
+            * max(balance, 0.0)
         )
+
+        # كتابة الحالة الأولية
         await self.state_manager.update_bot_status(
             balance=balance,
             daily_loss_used=self._daily_loss_used,
             daily_realized_pnl=self._daily_realized_pnl,
             daily_loss_limit=self._daily_loss_limit,
         )
+
+        # ✅ إذا Supabase غير متصل، نسجّل تحذيراً واضحاً
+        if self.state_manager.client is None:
+            logger.warning(
+                "⚠️ Supabase غير متصل — لن تظهر بيانات في الـ Dashboard. "
+                "تأكد من SUPABASE_URL و SUPABASE_KEY في البيئة."
+            )
+
         await self.telegram.send_startup(
             balance=balance,
             mode=str(self.config.active_mode)
@@ -462,6 +474,9 @@ class ApexTraderBot:
             logger.info("Shutting down...")
         finally:
             heartbeat_task.cancel()
+            # ✅ كتابة حالة الخروج واجبة — تضمن ظهور البيانات حتى في الدورة الواحدة
+            await self.state_manager.update_heartbeat()
+            await self.state_manager.mark_bot_stopped()
             await self.stop_webhook_server()
             await self.shutdown()
 
