@@ -1,3 +1,4 @@
-# Vercel - Removed, using Cloudflare only
+dist
+node_modules
 .vercel
-vercel.json
+.env
