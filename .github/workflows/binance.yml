@@ -89,6 +89,9 @@ jobs:
             -k "not test_real_balance and not test_real_ohlcv_data and not test_signal_engine_no_mock and not test_indicators_output_validity"
 
       - name: Run bot cycle
+        timeout-minutes: 3
+        env:
+          APEX_RUN_CYCLES: "1"
         run: python -m bot.main
 
       - name: Upload logs on failure

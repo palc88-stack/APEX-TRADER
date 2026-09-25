@@ -439,15 +439,24 @@ class ApexTraderBot:
             return web.json_response({"error": "Processing failed"}, status=500)
 
     async def run_forever(self, interval_seconds: int = 60) -> None:
-        # ✅ بدء webhook server قبل حلقة التداول
+        """تشغيل الـ trading loop — يدعم وضع الدورة الواحدة عبر APEX_RUN_CYCLES"""
+        max_cycles = int(os.environ.get("APEX_RUN_CYCLES", 0) or 0)
+        single_cycle = max_cycles > 0
+
         await self.start_webhook_server()
         await self.initialize()
         heartbeat_task = asyncio.create_task(
             self.start_heartbeat_loop(interval_seconds=10)
         )
+
         try:
+            cycles_done = 0
             while True:
                 await self.process_market_cycle()
+                cycles_done += 1
+                if single_cycle and cycles_done >= max_cycles:
+                    logger.info(f"✅ اكتمل {max_cycles} دورة(ات) — خروج من APEX_RUN_CYCLES={max_cycles}")
+                    break
                 await asyncio.sleep(interval_seconds)
         except asyncio.CancelledError:
             logger.info("Shutting down...")
