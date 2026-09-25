@@ -1,446 +1,221 @@
-from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any, Dict, Optional, Tuple
 
 import pandas as pd
 from loguru import logger
 
 
-@dataclass
-class ExplosionSignal:
+class IndicatorCalculator:
     """
-    إشارة انفجار سعري محتمل.
-    """
-
-    symbol: str
-    direction: str
-    score: float
-    confidence: float
-
-    squeeze_detected: bool = False
-    volume_surge: bool = False
-    volatility_expansion: bool = False
-    liquidation_zone_nearby: bool = False
-    momentum_acceleration: bool = False
-
-    estimated_move_pct: float = 0.0
-    key_level_above: float = 0.0
-    key_level_below: float = 0.0
-
-    @property
-    def is_valid(self) -> bool:
-        return (
-            self.score >= 0.70
-            and self.confidence >= 0.65
-        )
-
-
-class ExplosionDetector:
-    """
-    كاشف الحركات السعرية الحادة.
-
-    يعتمد على:
-    - Bollinger Band squeeze
-    - ارتفاع حجم التداول
-    - تسارع الزخم
-    - توسع التقلب
+    حاسب المؤشرات الفنية لنظام التداول الآلي.
+    يعتمد على بيانات OHLCV الحقيقية فقط.
     """
 
-    VOLUME_SURGE_THRESHOLD = 3.0
-    BB_SQUEEZE_RATIO = 0.70
-    MOMENTUM_THRESHOLD = 0.003
-    MIN_SCORE_FOR_SIGNAL = 0.60
+    def __init__(self, config: Optional[Dict[str, Any]] = None):
+        self.config = config or {}
 
-    def detect(
-        self,
-        symbol: str,
-        df: pd.DataFrame,
-        indicators: Any,
-        current_price: float,
-    ) -> Optional[ExplosionSignal]:
+    def calculate_all(self, df: pd.DataFrame) -> pd.DataFrame:
         """
-        اكتشاف انفجار سعري محتمل.
-
-        يستخدم Any لنوع indicators لأن المشروع لا يحتوي
-        على IndicatorResult فعلي. يجب أن يحتوي الكائن الممرر
-        على الخصائص التي تستخدمها الدوال أدناه.
+        حساب المؤشرات الفنية المطلوبة.
         """
+        if df is None or df.empty:
+            logger.warning(
+                "⚠️ محاولة حساب المؤشرات لإطار بياني فارغ."
+            )
+            return df
+
+        required_columns = [
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume",
+        ]
+
+        for column in required_columns:
+            if column not in df.columns:
+                logger.error(
+                    "❌ العمود الأساسي مفقود في البيانات: {}",
+                    column,
+                )
+                return df
+
         try:
-            if df is None or df.empty:
-                return None
+            result = df.copy()
 
-            signal = ExplosionSignal(
-                symbol=symbol,
-                direction="unknown",
-                score=0.0,
-                confidence=0.0,
+            result["sma_20"] = self.calculate_sma(
+                result,
+                period=20,
             )
 
-            self._check_bb_squeeze(
-                df,
-                indicators,
-                current_price,
-                signal,
+            result["ema_50"] = self.calculate_ema(
+                result,
+                period=50,
             )
 
-            self._check_volume_surge(
-                df,
-                indicators,
-                signal,
+            result["ema_200"] = self.calculate_ema(
+                result,
+                period=200,
             )
 
-            self._check_momentum(
-                df,
-                current_price,
-                signal,
+            result["rsi"] = self.calculate_rsi(
+                result,
+                period=14,
             )
 
-            self._check_volatility_expansion(
-                indicators,
-                signal,
+            macd, macd_signal, macd_hist = (
+                self.calculate_macd(
+                    result,
+                    fast=12,
+                    slow=26,
+                    signal_period=9,
+                )
             )
 
-            self._estimate_targets(
-                df,
-                current_price,
-                indicators,
-                signal,
+            result["macd"] = macd
+            result["macd_signal"] = macd_signal
+            result["macd_hist"] = macd_hist
+
+            bb_upper, bb_middle, bb_lower = (
+                self.calculate_bollinger_bands(
+                    result,
+                    period=20,
+                    std_dev=2.0,
+                )
             )
 
-            signal.score = self._calculate_score(signal)
+            result["bb_upper"] = bb_upper
+            result["bb_middle"] = bb_middle
+            result["bb_lower"] = bb_lower
 
-            signal.confidence = self._calculate_confidence(
-                signal,
-                indicators,
+            logger.debug(
+                "✅ تم حساب المؤشرات بنجاح على {} شمعة.",
+                len(result),
             )
 
-            if signal.score < self.MIN_SCORE_FOR_SIGNAL:
-                return None
-
-            signal.direction = self._determine_direction(
-                df,
-                indicators,
-                current_price,
-            )
-
-            logger.info(
-                "💥 انفجار محتمل: {} | النقاط: {:.2f} | "
-                "الاتجاه: {} | الحركة المتوقعة: {:.2f}%",
-                symbol,
-                signal.score,
-                signal.direction,
-                signal.estimated_move_pct,
-            )
-
-            return signal
+            return result
 
         except Exception as error:
             logger.error(
-                "❌ خطأ في كشف الانفجار للرمز {}: {}",
-                symbol,
+                "❌ خطأ أثناء حساب المؤشرات الفنية: {}",
                 error,
             )
-            return None
+            return df
 
-    def _check_bb_squeeze(
-        self,
+    @staticmethod
+    def calculate_sma(
         df: pd.DataFrame,
-        indicators: Any,
-        current_price: float,
-        signal: ExplosionSignal,
-    ) -> None:
-        """
-        فحص Bollinger Band squeeze وكسر النطاق.
-        """
-        if not getattr(indicators, "bb_squeeze", False):
-            return
+        period: int = 20,
+    ) -> pd.Series:
+        return df["close"].rolling(
+            window=period,
+            min_periods=period,
+        ).mean()
 
-        bb_upper = getattr(
-            indicators,
-            "bb_upper",
-            current_price,
-        )
-
-        bb_lower = getattr(
-            indicators,
-            "bb_lower",
-            current_price,
-        )
-
-        if current_price > bb_upper:
-            signal.squeeze_detected = True
-            signal.direction = "up"
-
-            logger.debug(
-                "🔔 {}: كسر Bollinger Band للأعلى",
-                signal.symbol,
-            )
-
-        elif current_price < bb_lower:
-            signal.squeeze_detected = True
-            signal.direction = "down"
-
-            logger.debug(
-                "🔔 {}: كسر Bollinger Band للأسفل",
-                signal.symbol,
-            )
-
-        else:
-            signal.squeeze_detected = True
-
-    def _check_volume_surge(
-        self,
+    @staticmethod
+    def calculate_ema(
         df: pd.DataFrame,
-        indicators: Any,
-        signal: ExplosionSignal,
-    ) -> None:
-        """
-        فحص ارتفاع حجم التداول.
-        """
-        volume_ratio = float(
-            getattr(indicators, "volume_ratio", 0.0)
-        )
+        period: int = 50,
+    ) -> pd.Series:
+        return df["close"].ewm(
+            span=period,
+            adjust=False,
+            min_periods=1,
+        ).mean()
 
-        if volume_ratio >= self.VOLUME_SURGE_THRESHOLD:
-            signal.volume_surge = True
-
-            logger.debug(
-                "🔔 {}: ارتفاع الحجم إلى {:.1f}x",
-                signal.symbol,
-                volume_ratio,
-            )
-
-        if (
-            "volume" in df.columns
-            and len(df) >= 3
-        ):
-            recent_volumes = df["volume"].tail(3).values
-
-            if (
-                recent_volumes[-1] > recent_volumes[-2]
-                and recent_volumes[-2] > recent_volumes[-3]
-            ):
-                signal.volume_surge = True
-
-    def _check_momentum(
-        self,
+    @staticmethod
+    def calculate_rsi(
         df: pd.DataFrame,
-        current_price: float,
-        signal: ExplosionSignal,
-    ) -> None:
-        """
-        فحص تسارع الزخم في آخر الشموع.
-        """
-        if (
-            "close" not in df.columns
-            or len(df) < 4
-        ):
-            return
+        period: int = 14,
+    ) -> pd.Series:
+        close = df["close"].astype(float)
+        delta = close.diff()
 
-        prices = df["close"].tail(4).astype(float).values
+        gains = delta.where(delta > 0, 0.0)
+        losses = -delta.where(delta < 0, 0.0)
 
-        if any(price == 0 for price in prices):
-            return
+        average_gain = gains.rolling(
+            window=period,
+            min_periods=period,
+        ).mean()
 
-        changes = [
-            abs(prices[index] - prices[index - 1])
-            / prices[index - 1]
-            for index in range(1, 4)
-        ]
+        average_loss = losses.rolling(
+            window=period,
+            min_periods=period,
+        ).mean()
 
-        average_change = sum(changes) / len(changes)
-
-        if average_change < self.MOMENTUM_THRESHOLD:
-            return
-
-        signal.momentum_acceleration = True
-
-        net_change = (
-            prices[-1] - prices[0]
-        ) / prices[0]
-
-        if net_change > 0:
-            signal.direction = "up"
-        elif net_change < 0:
-            signal.direction = "down"
-
-        logger.debug(
-            "🔔 {}: تسارع الزخم {:.4f}",
-            signal.symbol,
-            average_change,
+        relative_strength = average_gain / (
+            average_loss + 1e-12
         )
 
-    def _check_volatility_expansion(
-        self,
-        indicators: Any,
-        signal: ExplosionSignal,
-    ) -> None:
-        """
-        فحص توسع التقلب باستخدام ATR.
-        """
-        atr_pct = float(
-            getattr(indicators, "atr_pct", 0.0)
+        return 100.0 - (
+            100.0 / (1.0 + relative_strength)
         )
 
-        if atr_pct >= 0.30:
-            signal.volatility_expansion = True
-
-            logger.debug(
-                "🔔 {}: التقلب {:.3f}%",
-                signal.symbol,
-                atr_pct,
-            )
-
-    def _estimate_targets(
-        self,
+    @staticmethod
+    def calculate_macd(
         df: pd.DataFrame,
-        current_price: float,
-        indicators: Any,
-        signal: ExplosionSignal,
-    ) -> None:
-        """
-        تقدير مستويات الحركة المحتملة.
-        """
-        atr_pct = float(
-            getattr(indicators, "atr_pct", 0.0)
-        )
+        fast: int = 12,
+        slow: int = 26,
+        signal_period: int = 9,
+    ) -> Tuple[pd.Series, pd.Series, pd.Series]:
+        close = df["close"].astype(float)
 
-        signal.estimated_move_pct = round(
-            atr_pct * 3,
-            3,
-        )
+        fast_ema = close.ewm(
+            span=fast,
+            adjust=False,
+            min_periods=1,
+        ).mean()
 
-        if (
-            len(df) >= 20
-            and "high" in df.columns
-            and "low" in df.columns
-        ):
-            recent_high = float(
-                df["high"].tail(20).max()
-            )
+        slow_ema = close.ewm(
+            span=slow,
+            adjust=False,
+            min_periods=1,
+        ).mean()
 
-            recent_low = float(
-                df["low"].tail(20).min()
-            )
+        macd = fast_ema - slow_ema
 
-            signal.key_level_above = round(
-                recent_high,
-                2,
-            )
+        signal = macd.ewm(
+            span=signal_period,
+            adjust=False,
+            min_periods=1,
+        ).mean()
 
-            signal.key_level_below = round(
-                recent_low,
-                2,
-            )
+        histogram = macd - signal
 
-    def _calculate_score(
-        self,
-        signal: ExplosionSignal,
-    ) -> float:
-        score = 0.0
+        return macd, signal, histogram
 
-        if signal.squeeze_detected:
-            score += 0.30
-
-        if signal.volume_surge:
-            score += 0.25
-
-        if signal.momentum_acceleration:
-            score += 0.25
-
-        if signal.volatility_expansion:
-            score += 0.20
-
-        return min(score, 1.0)
-
-    def _calculate_confidence(
-        self,
-        signal: ExplosionSignal,
-        indicators: Any,
-    ) -> float:
-        signals_count = sum(
-            [
-                signal.squeeze_detected,
-                signal.volume_surge,
-                signal.momentum_acceleration,
-                signal.volatility_expansion,
-            ]
-        )
-
-        confidence = signals_count / 4
-
-        if signal.direction != "unknown":
-            confidence += 0.10
-
-        if getattr(
-            indicators,
-            "market_type",
-            None,
-        ) == "trending":
-            confidence += 0.10
-
-        return min(confidence, 1.0)
-
-    def _determine_direction(
-        self,
+    @staticmethod
+    def calculate_bollinger_bands(
         df: pd.DataFrame,
-        indicators: Any,
-        current_price: float,
-    ) -> str:
-        bullish_signals = 0
-        bearish_signals = 0
+        period: int = 20,
+        std_dev: float = 2.0,
+    ) -> Tuple[pd.Series, pd.Series, pd.Series]:
+        close = df["close"].astype(float)
 
-        ema_9 = getattr(
-            indicators,
-            "ema_9",
-            0.0,
+        middle = close.rolling(
+            window=period,
+            min_periods=period,
+        ).mean()
+
+        standard_deviation = close.rolling(
+            window=period,
+            min_periods=period,
+        ).std()
+
+        upper = middle + (
+            standard_deviation * std_dev
         )
 
-        ema_21 = getattr(
-            indicators,
-            "ema_21",
-            0.0,
+        lower = middle - (
+            standard_deviation * std_dev
         )
 
-        if ema_9 > ema_21:
-            bullish_signals += 1
-        else:
-            bearish_signals += 1
+        return upper, middle, lower
 
-        macd_trend = getattr(
-            indicators,
-            "macd_trend",
-            None,
-        )
 
-        if macd_trend == "bullish":
-            bullish_signals += 1
-        elif macd_trend == "bearish":
-            bearish_signals += 1
+class TechnicalIndicators(IndicatorCalculator):
+    """
+    توافق مع أي كود يستورد TechnicalIndicators.
+    """
 
-        rsi = float(
-            getattr(indicators, "rsi", 50.0)
-        )
-
-        if rsi > 50:
-            bullish_signals += 1
-        else:
-            bearish_signals += 1
-
-        bb_position = getattr(
-            indicators,
-            "bb_position",
-            None,
-        )
-
-        if bb_position == "upper":
-            bullish_signals += 1
-        elif bb_position == "lower":
-            bearish_signals += 1
-
-        if bullish_signals > bearish_signals:
-            return "up"
-
-        if bearish_signals > bullish_signals:
-            return "down"
-
-        return "unknown"
+    pass
