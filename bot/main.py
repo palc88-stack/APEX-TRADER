@@ -128,6 +128,19 @@ class ApexTraderBot:
     async def process_market_cycle(self) -> None:
         logger.info(f"Market cycle: {datetime.now(timezone.utc).isoformat()}")
 
+        # ✅ تنفيذ الإشارات المعلقة من Cloudflare Worker (pending_signals)
+        pending = await self.state_manager.get_pending_signals()
+        if pending:
+            logger.info(f"Processing {len(pending)} pending signals from webhook...")
+            for signal in pending:
+                try:
+                    await self._execute_webhook_signal(signal)
+                    await self.state_manager.mark_signal_processed(signal["id"])
+                    logger.info(f"✅ Processed pending signal #{signal['id']}: {signal['symbol']} {signal['action']}")
+                except Exception as e:
+                    logger.error(f"❌ Failed to process pending signal #{signal['id']}: {e}")
+                    await self.telegram.send_error(f"Pending Signal Error #{signal['id']}: {str(e)}")
+
         for symbol in self.config.trading.symbols:
             try:
                 # 1. جلب البيانات
@@ -395,6 +408,11 @@ class ApexTraderBot:
         }
         self.state_manager.save_trade_state(trade_record)
         logger.info(f"✅ صفقة من.Webhook: {symbol} {order_side} @ {current_price} | ID: {trade_record['id']}")
+
+    async def _execute_webhook_signal(self, webhook_data: Dict[str, Any]) -> None:
+        """ Called from process_market_cycle to execute a pending webhook signal.
+            Reuses the same logic as handle_webhook_signal. """
+        await self.handle_webhook_signal(webhook_data)
 
     # ── Webhook Server ──────────────────────────────────────────────────────────
 

@@ -55,5 +55,32 @@ ALTER TABLE bot_state
 ALTER TABLE bot_state
     ADD COLUMN IF NOT EXISTS daily_realized_pnl DECIMAL(10, 2) DEFAULT 0.00;
 
--- ===== باقي الجداول بدون تغيير =====
--- (trades, daily_performance, system_logs - كما هي)
+|-- ===== جدول pending_signals (للاستقبال من Cloudflare Worker) =====
+CREATE TABLE IF NOT EXISTS pending_signals (
+    id SERIAL PRIMARY KEY,
+    symbol VARCHAR(20) NOT NULL,
+    side VARCHAR(10) NOT NULL,
+    action VARCHAR(10) NOT NULL,
+    price DECIMAL(18, 8),
+    webhook_id VARCHAR(100),
+    status VARCHAR(20) DEFAULT 'pending',
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    processed_at TIMESTAMPTZ
+);
+
+ALTER TABLE pending_signals
+    ADD COLUMN IF NOT EXISTS symbol VARCHAR(20) NOT NULL;
+ALTER TABLE pending_signals
+    ADD COLUMN IF NOT EXISTS side VARCHAR(10) NOT NULL;
+ALTER TABLE pending_signals
+    ADD COLUMN IF NOT EXISTS action VARCHAR(10) NOT NULL;
+ALTER TABLE pending_signals
+    ADD COLUMN IF NOT EXISTS price DECIMAL(18, 8);
+ALTER TABLE pending_signals
+    ADD COLUMN IF NOT EXISTS webhook_id VARCHAR(100);
+ALTER TABLE pending_signals
+    ADD COLUMN IF NOT EXISTS status VARCHAR(20) DEFAULT 'pending';
+ALTER TABLE pending_signals
+    ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();
+ALTER TABLE pending_signals
+    ADD COLUMN IF NOT EXISTS processed_at TIMESTAMPTZ;

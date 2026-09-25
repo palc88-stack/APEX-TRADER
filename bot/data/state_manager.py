@@ -218,3 +218,37 @@ class StateManager:
                 trade_dict.get("id"), e
             )
             return None
+
+    # ─── Pending Signals ( webhook ↔ bot) ────────────────────────────────────────────
+
+    def get_pending_signals(self) -> List[Dict[str, Any]]:
+        """استرجاع جميع الإشارات المعلقة من Supabase (من Cloudflare Worker)"""
+        if not self.client:
+            return []
+        try:
+            res = (
+                self.client.table("pending_signals")
+                .select("*")
+                .eq("status", "pending")
+                .order("created_at", ascending=True)
+                .execute()
+            )
+            return res.data if res and hasattr(res, "data") else []
+        except Exception as e:
+            logger.error("❌ get_pending_signals: {}", e)
+            return []
+
+    def mark_signal_processed(self, signal_id: int) -> bool:
+        """وضع علامة Processed على الإشارة بعد تنفيذها"""
+        if not self.client:
+            return False
+        try:
+            self.client.table("pending_signals").update({
+                "status": "processed",
+                "processed_at": datetime.now(timezone.utc).isoformat(),
+            }).eq("id", signal_id).execute()
+            logger.info("✅ تم وضع علامة Processed على pending_signal #{}", signal_id)
+            return True
+        except Exception as e:
+            logger.error("❌ mark_signal_processed: {}", e)
+            return False
