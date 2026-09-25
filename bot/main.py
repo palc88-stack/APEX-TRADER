@@ -62,6 +62,23 @@ class ApexTraderBot:
             chat_id=self.config.TELEGRAM_CHAT_ID
         )
 
+    async def start_heartbeat_loop(self, interval_seconds: int = 10):
+        """إرسال نبضات دورية حية لتحديث حالة الخدمات في الواجهة."""
+        logger.info("💗 تم بدء حلقة إرسال النبضات الحية (Heartbeat)...")
+        while True:
+            try:
+                now_utc = datetime.now(timezone.utc).isoformat()
+                self.supabase_client.table("bot_runtime_status").upsert({
+                    "id": 1,
+                    "is_running": True,
+                    "last_heartbeat": now_utc,
+                    "updated_at": now_utc
+                }).execute()
+                logger.debug(f"💓 Heartbeat updated: {now_utc}")
+            except Exception as e:
+                logger.error(f"⚠️ فشل تحديث النبضة: {e}")
+            await asyncio.sleep(interval_seconds)
+
     async def initialize(self) -> None:
         """تهيئة الاتصالات واستعادة الحالة السابقة من Supabase/Redis."""
         logger.info("Initializing ApexTrader runtime environment...")
@@ -74,7 +91,7 @@ class ApexTraderBot:
         
         for symbol in self.config.trading.symbols:
             try:
-                # 1. جلب بيانات الأسعار
+                # 1. جلب بيانات الأسعار الحيّة
                 candles = await self.market_data.get_candles(symbol, self.config.trading.timeframe)
                 ticker = await self.exchange.get_ticker(symbol)
                 current_price = ticker["close"]
@@ -94,7 +111,7 @@ class ApexTraderBot:
                         await self.state_manager.update_position(pos["id"], close_res)
                         await self.telegram.send_trade_update(symbol, close_res)
 
-                # 3. معالجة وتوليد الإشارات الجديد
+                # 3. معالجة وتوليد الإشارات الجديدة
                 signal = await self.signal_engine.analyze(symbol, candles)
                 
                 if signal and signal.is_valid:
@@ -130,6 +147,10 @@ class ApexTraderBot:
     async def run_forever(self, interval_seconds: int = 60) -> None:
         """تشغيل البوت في حلقة مستمرة."""
         await self.initialize()
+        
+        # إطلاق حلقة النبضات كـ Background Task
+        heartbeat_task = asyncio.create_task(self.start_heartbeat_loop(interval_seconds=10))
+        
         try:
             while True:
                 await self.process_market_cycle()
@@ -137,11 +158,21 @@ class ApexTraderBot:
         except asyncio.CancelledError:
             logger.info("Main loop cancelled, shutting down gracefully...")
         finally:
+            heartbeat_task.cancel()
             await self.shutdown()
 
     async def shutdown(self) -> None:
-        """إغلاق الموارد والروابط بأمان."""
+        """إغلاق الموارد وتحديث حالة إيقاف البوت."""
         logger.info("Closing exchange and persistence connections...")
+        try:
+            now_utc = datetime.now(timezone.utc).isoformat()
+            self.supabase_client.table("bot_runtime_status").update({
+                "is_running": False,
+                "updated_at": now_utc
+            }).eq("id", 1).execute()
+        except Exception:
+            pass
+        
         await self.exchange.close()
         await self.market_data.close()
         await self.redis_client.close()
