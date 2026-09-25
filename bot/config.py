@@ -89,6 +89,23 @@ class ExchangeConfig:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Webhook / Internal API (لربط worker.js + TradingView)
+# ─────────────────────────────────────────────────────────────────────────────
+
+@dataclass
+class WebhookConfig:
+    internal_api_key: str = field(
+        default_factory=lambda: _env_text("INTERNAL_API_KEY", "")
+    )
+    bot_server_url: str = field(
+        default_factory=lambda: _env_text("BOT_SERVER_URL", "http://localhost:8080")
+    )
+    webhook_secret: str = field(
+        default_factory=lambda: _env_text("WEBHOOK_SECRET", "")
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Database (Supabase)
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -153,6 +170,7 @@ class Config:
     telegram: TelegramConfig = field(default_factory=TelegramConfig)
     risk: RiskConfig = field(default_factory=RiskConfig)
     trading: TradingConfig = field(default_factory=TradingConfig)
+    webhook: WebhookConfig = field(default_factory=WebhookConfig)
 
     initial_balance: float = field(default_factory=lambda: _env_float("INITIAL_BALANCE", 100.0))
     active_mode: str = field(default_factory=lambda: _env_text("ACTIVE_MODE", "HUNTER").upper())

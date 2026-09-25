@@ -1,10 +1,12 @@
-# bot/main.py - الكود المُصحَّح (كامل)
+# bot/main.py - الكود المُصحَّح (كامل + Webhook Endpoint)
 
 import asyncio
 import logging
 from datetime import datetime, timezone
 from typing import Dict, Any, Optional
 
+import aiohttp
+from aiohttp import web
 import redis.asyncio as aioredis
 from supabase import create_client, Client
 
@@ -48,6 +50,10 @@ class ApexTraderBot:
         # ✅ تتبع الحالة المالية اليومية
         self._daily_loss_used = 0.0
         self._daily_realized_pnl = 0.0
+        # ✅ Webhook server
+        self._webhook_runner: Optional[web.AppRunner] = None
+        self._webhook_site: Optional[web.TCPSite] = None
+        self._webhook_port: int = 8080
 
     def _init_supabase(self) -> Client:
         try:
@@ -255,23 +261,186 @@ class ApexTraderBot:
             return 10.0
 
     async def handle_webhook_signal(self, webhook_data: Dict[str, Any]) -> None:
-        """استقبال إشارات Webhook (TradingView) بعد التحقق من التوقيع في worker.js."""
+        """استقبال إشارات Webhook (TradingView) وتنفيذها فوراً"""
         symbol = webhook_data.get("symbol", "")
-        logger.info(f"Webhook Signal: {symbol}")
+        side = webhook_data.get("side", "").lower()
+        action = webhook_data.get("action", "").upper()
+        price = float(webhook_data.get("price", 0))
+        webhook_id = webhook_data.get("id", "")
 
-        signal_result = self.signal_engine.evaluate_market(None, symbol)
+        logger.info(f"📥 Webhook Signal: {symbol} {side} @ {price} (id={webhook_id})")
+
+        # توحيد الاتجاه
+        if side == "buy" or action in ("BUY", "LONG"):
+            order_side = "buy"
+            direction = "LONG"
+        else:
+            order_side = "sell"
+            direction = "SHORT"
+
+        # 1. التحقق من المراكز المفتوحة
         open_positions = self.state_manager.get_open_trades_from_db()
         symbol_positions = [p for p in open_positions if p.get("symbol") == symbol]
 
-        if not self.risk_manager.check_risk_limits(
-            type("S", (), signal_result)(),
-            open_positions=symbol_positions
-        ):
+        if symbol_positions:
+            logger.warning(f"⚠️ يوجد مركز مفتوح بالفعل على {symbol} — تم تجاوز الإشارة")
             return
 
-        logger.info(f"✅ Webhook signal approved for {symbol}")
+        # 2. فحص المخاطر (الثقة والحدود)
+        fake_signal = type("S", (), {
+            "symbol": symbol,
+            "action": direction,
+            "confidence": 0.85,
+            "price": price,
+        })()
+
+        if not self.risk_manager.check_risk_limits(
+            fake_signal,
+            open_positions=symbol_positions
+        ):
+            logger.warning(f"⚠️ risk_manager رفض الإشارة لـ {symbol}")
+            return
+
+        # 3. جلب السعر الحالي
+        if price <= 0:
+            ticker = await self.exchange.get_ticker(symbol)
+            current_price = float(ticker.get("last", 0))
+        else:
+            current_price = price
+
+        if current_price <= 0:
+            logger.error(f"❌ سعر غير صالح لـ {symbol}: {current_price}")
+            return
+
+        # 4. حساب الأسعار
+        risk_cfg = self.config.risk
+        sl_pct = risk_cfg.default_sl_pct / 100
+        tp1_pct = risk_cfg.tp1_pct / 100
+        tp2_pct = risk_cfg.tp2_pct / 100
+        leverage = risk_cfg.max_leverage
+        size_usd = self._calculate_position_size()
+
+        if order_side == "buy":
+            stop_loss = round(current_price * (1 - sl_pct), 6)
+            take_profit_1 = round(current_price * (1 + tp1_pct), 6)
+            take_profit_2 = round(current_price * (1 + tp2_pct), 6)
+        else:
+            stop_loss = round(current_price * (1 + sl_pct), 6)
+            take_profit_1 = round(current_price * (1 - tp1_pct), 6)
+            take_profit_2 = round(current_price * (1 - tp2_pct), 6)
+
+        # 5. فحص المخاطر المتقدمة
+        balance = await self.exchange.get_balance()
+        if not self.risk_manager.evaluate_risk(
+            account_balance=balance,
+            size_usd=size_usd,
+            leverage=leverage,
+            entry_price=current_price,
+            stop_loss=stop_loss,
+            direction=order_side
+        ):
+            logger.warning(f"⚠️ evaluate_risk رفض لـ {symbol}")
+            return
+
+        # 6. تنفيذ الأمر
+        order = await self.exchange.place_order(
+            symbol=symbol,
+            side=order_side,
+            amount=size_usd / current_price,
+            price=current_price,
+            stop_loss=stop_loss,
+            take_profit=take_profit_1
+        )
+
+        # 7. حفظ الصفقة
+        fee_result = self.fee_calculator.calculate(
+            position_size=size_usd * leverage
+        )
+        trade_record = {
+            "id": str(order.get("id", "") or webhook_id or f"web-{int(time.time())}"),
+            "symbol": symbol,
+            "direction": direction,
+            "exchange": self.config.exchange.primary_exchange(),
+            "entry_price": current_price,
+            "stop_loss": stop_loss,
+            "take_profit_1": take_profit_1,
+            "take_profit_2": take_profit_2,
+            "size_usd": size_usd,
+            "leverage": leverage,
+            "entry_fee": fee_result.entry_fee,
+            "exit_fee": fee_result.exit_fee,
+            "status": "OPEN",
+            "confidence": 0.85,
+            "opened_at": datetime.now(timezone.utc).isoformat(),
+            "tp1_executed": False,
+            "trailing_active": False,
+            "trailing_stop": 0,
+            "breakeven_set": False,
+            "highest_price": current_price,
+            "lowest_price": current_price,
+            "source": "webhook",
+        }
+        self.state_manager.save_trade_state(trade_record)
+        logger.info(f"✅ صفقة من.Webhook: {symbol} {order_side} @ {current_price} | ID: {trade_record['id']}")
+
+    # ── Webhook Server ──────────────────────────────────────────────────────────
+
+    async def start_webhook_server(self) -> None:
+        """بدء خادم webhook internal لاستقبال الإشارات من worker.js/TradingView"""
+        app = web.Application()
+        app.router.add_post('/webhook', self._webhook_handler)
+        self._webhook_runner = web.AppRunner(app)
+        await self._webhook_runner.setup()
+        self._webhook_site = web.TCPSite(self._webhook_runner, '0.0.0.0', self._webhook_port)
+        await self._webhook_site.start()
+        logger.info(f"🌐 Webhook server listening on port {self._webhook_port} (path: /webhook)")
+
+    async def stop_webhook_server(self) -> None:
+        """إيقاف خادم webhook"""
+        if self._webhook_site:
+            await self._webhook_site.stop()
+        if self._webhook_runner:
+            await self._webhook_runner.cleanup()
+        logger.info("🛑 Webhook server stopped")
+
+    async def _webhook_handler(self, request: web.Request) -> web.Response:
+        """استقبال إشارات من worker.js (TradingView)"""
+        # 1. التحقق من المصادقة
+        auth_header = request.headers.get('Authorization', '')
+        expected_auth = f"Bearer {self.config.webhook.internal_api_key}"
+        if not self.config.webhook.internal_api_key:
+            logger.warning("⚠️ INTERNAL_API_KEY غير مضبوط — الـ webhook مرفوض")
+            return web.json_response({"error": "Server not configured"}, status=503)
+        if auth_header != expected_auth:
+            logger.warning("⚠️ محاولة وصول غير مصرح بها إلى webhook")
+            return web.json_response({"error": "Unauthorized"}, status=401)
+
+        # 2. قراءة البيانات
+        try:
+            data = await request.json()
+        except Exception:
+            return web.json_response({"error": "Invalid JSON"}, status=400)
+
+        # 3. التحقق من صحة الإشارة
+        symbol = data.get("symbol", "")
+        side = data.get("side", "").lower()
+        action = data.get("action", "").upper()
+
+        if not symbol or side not in ("buy", "sell") or action not in ("BUY", "SELL", "LONG", "SHORT"):
+            logger.warning(f"⚠️ إشارة غير صالحة: {data}")
+            return web.json_response({"error": "Invalid signal format"}, status=400)
+
+        # 4. معالجة الإشارة
+        try:
+            await self.handle_webhook_signal(data)
+            return web.json_response({"success": True, "message": f"Signal processed for {symbol}"})
+        except Exception as e:
+            logger.error(f"❌ خطأ في معالجة الـ webhook: {e}", exc_info=True)
+            return web.json_response({"error": "Processing failed"}, status=500)
 
     async def run_forever(self, interval_seconds: int = 60) -> None:
+        # ✅ بدء webhook server قبل حلقة التداول
+        await self.start_webhook_server()
         await self.initialize()
         heartbeat_task = asyncio.create_task(
             self.start_heartbeat_loop(interval_seconds=10)
@@ -284,6 +453,7 @@ class ApexTraderBot:
             logger.info("Shutting down...")
         finally:
             heartbeat_task.cancel()
+            await self.stop_webhook_server()
             await self.shutdown()
 
     async def shutdown(self) -> None:
