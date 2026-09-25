@@ -174,8 +174,6 @@ class MarketDataManager:
             )
 
             # ✅ إسقاط الشمعة الأخيرة إن كانت لا تزال قيد التكوّن
-            # (لم تُغلق بعد) لمنع استخدام مؤشرات فنية غير مستقرة
-            # (repainting) في توليد الإشارات.
             dataframe = self._drop_unclosed_candle(
                 dataframe, timeframe
             )
@@ -303,11 +301,6 @@ class MarketDataManager:
         dataframe: pd.DataFrame,
         timeframe: str,
     ) -> pd.DataFrame:
-        """
-        يحذف آخر صف إن كانت شمعته لم تُغلق بعد (أي أن وقت
-        بدايتها + مدة الفريم الزمني لا يزال في المستقبل أو
-        الآن)، لتفادي حساب المؤشرات على بيانات متغيرة لحظياً.
-        """
         if dataframe.empty:
             return dataframe
 
@@ -438,3 +431,8 @@ class MarketDataManager:
         if self._exchange is not None:
             await self._exchange.close()
             self._exchange = None
+
+
+# === توافق مباشر مع استيراد MarketDataFeed في main.py ===
+class MarketDataFeed(MarketDataManager):
+    pass
