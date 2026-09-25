@@ -951,3 +951,8 @@ class ExchangeManager:
                 )
 
         self._exchanges.clear()
+
+
+# === توافق مباشر مع استيراد ExchangeAdapter في main.py ===
+class ExchangeAdapter(ExchangeManager):
+    pass
