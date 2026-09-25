@@ -1,16 +1,171 @@
-# bot/data/state_manager.py - الكود الحالي (ناقص)
-class StateManager:
-    def __init__(self, config=None):
-        self.config = config or {}
-        # ❌ يقرأ من config dict فقط - لا يدعم Config object
-        self.supabase_url = os.getenv("SUPABASE_URL", ...)
-        self.supabase_key = os.getenv("SUPABASE_KEY", ...)
-        self.client = None
-        self._init_supabase_connection()
+# bot/data/state_manager.py - الكود المُصحَّح (كامل)
+import os
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional
 
-    # ❌ الدوال المفقودة:
-    # - load_initial_state()
-    # - update_heartbeat()
-    # - reconstruct_position()
-    # - mark_bot_stopped()
-    # - get_active_positions(symbol)
+from loguru import logger
+from supabase import create_client, Client
+
+from bot.core.position_manager import Position, PositionStatus
+from bot.signals.signal_engine import TradeDirection
+
+
+class StateManager:
+    """
+    مدير الحالة الكامل لـ Apex Trader.
+    يتولى: Supabase read/write، Heartbeat، استعادة الصفقات.
+    """
+
+    def __init__(self, config: Optional[Any] = None):
+        self.config = config
+
+        supabase_url = (
+            getattr(getattr(config, "database", None), "supabase_url", None)
+            or os.getenv("SUPABASE_URL", "")
+        )
+        supabase_key = (
+            getattr(getattr(config, "database", None), "supabase_key", None)
+            or os.getenv("SUPABASE_KEY", "")
+        )
+
+        self.client: Optional[Client] = None
+        if supabase_url and supabase_key:
+            try:
+                self.client = create_client(supabase_url, supabase_key)
+                logger.info("✅ StateManager: Supabase متصل")
+            except Exception as e:
+                logger.error("❌ Supabase connection failed: {}", e)
+        else:
+            logger.warning("⚠️ Supabase غير مضبوط - وضع محلي")
+
+    # ─── Lifecycle ────────────────────────────────────────────────────────────
+
+    async def load_initial_state(self) -> None:
+        """استعادة الصفقات المفتوحة من قاعدة البيانات عند البدء."""
+        if not self.client:
+            return
+        try:
+            open_trades = self.get_open_trades_from_db()
+            logger.info(
+                "✅ تم استعادة {} صفقة مفتوحة من قاعدة البيانات.",
+                len(open_trades)
+            )
+        except Exception as e:
+            logger.error("❌ load_initial_state: {}", e)
+
+    async def update_heartbeat(self) -> None:
+        """
+        ✅ كتابة Heartbeat عبر StateManager (لا يتجاوزه main.py).
+        يكتب في جدول bot_state (الاسم الصحيح في schema.sql).
+        """
+        if not self.client:
+            return
+        try:
+            now_utc = datetime.now(timezone.utc).isoformat()
+            self.client.table("bot_state").update({
+                "is_running": True,
+                "last_run_at": now_utc,
+                "updated_at": now_utc
+            }).eq("id", 1).execute()
+            logger.debug("💓 Heartbeat: {}", now_utc)
+        except Exception as e:
+            logger.error("❌ update_heartbeat: {}", e)
+
+    async def mark_bot_stopped(self) -> None:
+        """تسجيل إيقاف البوت في قاعدة البيانات."""
+        if not self.client:
+            return
+        try:
+            now_utc = datetime.now(timezone.utc).isoformat()
+            self.client.table("bot_state").update({
+                "is_running": False,
+                "updated_at": now_utc
+            }).eq("id", 1).execute()
+            logger.info("🛑 Bot marked as stopped in DB")
+        except Exception as e:
+            logger.error("❌ mark_bot_stopped: {}", e)
+
+    # ─── Trades ───────────────────────────────────────────────────────────────
+
+    def save_trade_state(self, trade_data: Dict[str, Any]) -> bool:
+        """حفظ أو تحديث صفقة في Supabase."""
+        if not self.client:
+            logger.debug("ℹ️ Supabase غير مفعّل، تخطي الحفظ.")
+            return False
+        try:
+            self.client.table("trades").upsert(trade_data).execute()
+            logger.info(
+                "✅ تم حفظ الصفقة: {}", trade_data.get("symbol")
+            )
+            return True
+        except Exception as e:
+            logger.error("❌ save_trade_state: {}", e)
+            return False
+
+    def get_open_trades_from_db(self) -> List[Dict[str, Any]]:
+        """استرجاع الصفقات المفتوحة من Supabase."""
+        if not self.client:
+            return []
+        try:
+            res = (
+                self.client.table("trades")
+                .select("*")
+                .eq("status", "OPEN")
+                .execute()
+            )
+            return res.data if res and hasattr(res, "data") else []
+        except Exception as e:
+            logger.error("❌ get_open_trades_from_db: {}", e)
+            return []
+
+    def reconstruct_position(
+        self, trade_dict: Dict[str, Any]
+    ) -> Optional[Position]:
+        """
+        ✅ دالة مفقودة - تحوّل dict من Supabase إلى Position object.
+        ضرورية لإعادة تفعيل Trailing Stop و Break Even بعد إعادة تشغيل البوت.
+        """
+        try:
+            direction_str = trade_dict.get("direction", "LONG").upper()
+            direction = (
+                TradeDirection.LONG
+                if direction_str == "LONG"
+                else TradeDirection.SHORT
+            )
+
+            pos = Position(
+                id=str(trade_dict.get("id", "")),
+                symbol=str(trade_dict.get("symbol", "")),
+                direction=direction,
+                exchange=str(trade_dict.get("exchange", "binance")),
+                entry_price=float(trade_dict.get("entry_price", 0)),
+                current_price=float(trade_dict.get("entry_price", 0)),
+                stop_loss=float(trade_dict.get("stop_loss", 0)),
+                take_profit_1=float(trade_dict.get("take_profit_1", 0)),
+                take_profit_2=float(trade_dict.get("take_profit_2", 0)),
+                size_usd=float(trade_dict.get("size_usd", 0)),
+                leverage=int(trade_dict.get("leverage", 10)),
+                entry_fee=float(trade_dict.get("entry_fee", 0)),
+                exit_fee=float(trade_dict.get("exit_fee", 0)),
+                # ✅ استعادة حالة Trailing/BreakEven من DB
+                tp1_executed=bool(trade_dict.get("tp1_executed", False)),
+                trailing_active=bool(trade_dict.get("trailing_active", False)),
+                trailing_stop=float(trade_dict.get("trailing_stop", 0)),
+                breakeven_set=bool(trade_dict.get("breakeven_set", False)),
+                highest_price=float(
+                    trade_dict.get("highest_price", 0)
+                    or trade_dict.get("entry_price", 0)
+                ),
+                lowest_price=float(
+                    trade_dict.get("lowest_price", 0)
+                    or trade_dict.get("entry_price", 0)
+                ),
+                status=PositionStatus.OPEN,
+            )
+            return pos
+        except Exception as e:
+            logger.error(
+                "❌ reconstruct_position فشل لـ {}: {}",
+                trade_dict.get("id"), e
+            )
+            return None
