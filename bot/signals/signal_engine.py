@@ -1,3 +1,4 @@
+# bot/signals/signal_engine.py - الكود المُصحَّح
 import pandas as pd
 from typing import Dict, Any, Optional
 from enum import Enum
@@ -8,10 +9,6 @@ from bot.signals.filters import SignalFilters
 
 
 class TradeDirection(str, Enum):
-    """
-    توحيد اتجاهات التداول لتغطية كافة المراجع البرمجية في المنظومة 
-    (سواء القادمة من مدير المراكز مثل LONG/SHORT أو استراتيجيات السكالبينج مثل BUY/SELL/HOLD).
-    """
     LONG = "LONG"
     SHORT = "SHORT"
     BUY = "BUY"
@@ -19,22 +16,44 @@ class TradeDirection(str, Enum):
     HOLD = "HOLD"
 
 
-class TradingMode(str, Enum):
-    LIVE = "LIVE"
-    TESTNET = "TESTNET"
-
-
 class TradeSignal:
     """
-    نموذج كلاس إشارة التداول الحقيقية المتكاملة لمنظومة (Apex Trader).
+    ✅ إضافة is_valid و side لتوافق main.py
     """
-    def __init__(self, symbol: str, action: str, price: float, confidence: float, strategy: str, reason: str):
+    def __init__(
+        self,
+        symbol: str,
+        action: str,
+        price: float,
+        confidence: float,
+        strategy: str,
+        reason: str
+    ):
         self.symbol = symbol
         self.action = action
         self.price = price
         self.confidence = confidence
         self.strategy = strategy
         self.reason = reason
+
+    @property
+    def is_valid(self) -> bool:
+        """✅ دالة مفقودة - يستخدمها main.py"""
+        return (
+            self.action not in (TradeDirection.HOLD, "HOLD")
+            and self.confidence >= 0.65
+            and self.price > 0
+        )
+
+    @property
+    def side(self) -> str:
+        """✅ توحيد الاتجاه لـ buy/sell لـ exchange.place_order()"""
+        action_upper = str(self.action).upper()
+        if action_upper in ("LONG", "BUY"):
+            return "buy"
+        if action_upper in ("SHORT", "SELL"):
+            return "sell"
+        return "hold"
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -43,25 +62,29 @@ class TradeSignal:
             "price": self.price,
             "confidence": self.confidence,
             "strategy": self.strategy,
-            "reason": self.reason
+            "reason": self.reason,
         }
 
 
 class SignalEngine:
     """
-    محرك الإشارات الرئيسي (Signal Engine) لمنظومة التداول الآلي (Apex Trader).
-    يقوم بتحليل تدفقات السوق الحية عبر المؤشرات والفلاتر الاستراتيجية بدقة صارمة.
-    خالٍ تماماً من أي قيم أو إشارات وهمية.
+    ✅ محرك الإشارات المُحسَّن - يدمج Explosion و Scalping.
     """
 
-    def __init__(self, config: Optional[Dict[str, Any]] = None):
-        self.config = config or {}
-        self.indicator_calculator = IndicatorCalculator(self.config)
-        self.signal_filters = SignalFilters(self.config)
+    def __init__(self, config: Optional[Any] = None):
+        self.config = config
+        cfg_dict = config.__dict__ if hasattr(config, "__dict__") else {}
+        self.indicator_calculator = IndicatorCalculator(cfg_dict)
+        self.signal_filters = SignalFilters(cfg_dict)
 
-    def evaluate_market(self, df: pd.DataFrame, symbol: str) -> Dict[str, Any]:
+    def evaluate_market(
+        self,
+        df: Optional[pd.DataFrame],
+        symbol: str
+    ) -> Dict[str, Any]:
         """
-        تقييم حالة السوق الحية للرمز المالي واستخراج إشارات التداول الحقيقية.
+        تقييم حالة السوق وإرجاع dict للإشارة.
+        ✅ يدمج منطق Scalping مع منطق الاتجاه.
         """
         result = {
             "symbol": symbol,
@@ -69,11 +92,13 @@ class SignalEngine:
             "strategy": None,
             "confidence": 0.0,
             "indicators": {},
-            "reason": "No valid signal detected"
+            "reason": "No valid signal detected",
         }
 
         if df is None or df.empty or len(df) < 50:
-            logger.warning("⚠️ بيانات غير كافية للتحليل الفني للرمز: {}", symbol)
+            logger.warning(
+                "⚠️ بيانات غير كافية للتحليل: {}", symbol
+            )
             return result
 
         try:
@@ -81,36 +106,67 @@ class SignalEngine:
             if df_analyzed is None or df_analyzed.empty:
                 return result
 
-            latest_row = df_analyzed.iloc[-1]
-            close_price = float(latest_row.get('close', 0.0))
-            rsi = float(latest_row.get('rsi', 50.0))
-            ema_200 = float(latest_row.get('ema_200', close_price))
+            latest = df_analyzed.iloc[-1]
+            close = float(latest.get("close", 0.0))
+            rsi = float(latest.get("rsi", 50.0))
+            ema_200 = float(latest.get("ema_200", close))
+            bb_upper = float(latest.get("bb_upper", close))
+            bb_lower = float(latest.get("bb_lower", close))
 
             result["indicators"] = {
-                "close": close_price,
+                "close": close,
                 "rsi": rsi,
-                "ema_200": ema_200
+                "ema_200": ema_200,
+                "bb_upper": bb_upper,
+                "bb_lower": bb_lower,
             }
 
-            is_trend_bullish = close_price > ema_200
-            is_trend_bearish = close_price < ema_200
+            is_trend_bullish = close > ema_200
+            is_trend_bearish = close < ema_200
 
+            # ─ Scalping: أولوية لاستراتيجية البولنجر ─
+            if close <= bb_lower and rsi < 35:
+                if self.signal_filters.validate_signal("BUY", latest):
+                    result.update({
+                        "action": TradeDirection.LONG,
+                        "strategy": "SCALPING_BUY",
+                        "confidence": 0.80,
+                        "reason": "Lower BB touch + RSI oversold.",
+                    })
+                    return result
+
+            elif close >= bb_upper and rsi > 65:
+                if self.signal_filters.validate_signal("SELL", latest):
+                    result.update({
+                        "action": TradeDirection.SHORT,
+                        "strategy": "SCALPING_SELL",
+                        "confidence": 0.80,
+                        "reason": "Upper BB touch + RSI overbought.",
+                    })
+                    return result
+
+            # ─ Trend Bounce: استراتيجية الاتجاه ─
             if is_trend_bullish and rsi < 40:
-                if self.signal_filters.validate_signal("BUY", latest_row):
-                    result["action"] = TradeDirection.LONG
-                    result["strategy"] = "TREND_BOUNCE"
-                    result["confidence"] = 0.85
-                    result["reason"] = "Bullish trend pullback with RSI oversold recovery."
-
+                if self.signal_filters.validate_signal("BUY", latest):
+                    result.update({
+                        "action": TradeDirection.LONG,
+                        "strategy": "TREND_BOUNCE",
+                        "confidence": 0.85,
+                        "reason": "Bullish trend pullback + RSI oversold.",
+                    })
             elif is_trend_bearish and rsi > 60:
-                if self.signal_filters.validate_signal("SELL", latest_row):
-                    result["action"] = TradeDirection.SHORT
-                    result["strategy"] = "TREND_PULLBACK"
-                    result["confidence"] = 0.85
-                    result["reason"] = "Bearish trend rally with RSI overbought rejection."
+                if self.signal_filters.validate_signal("SELL", latest):
+                    result.update({
+                        "action": TradeDirection.SHORT,
+                        "strategy": "TREND_PULLBACK",
+                        "confidence": 0.85,
+                        "reason": "Bearish trend rally + RSI overbought.",
+                    })
 
             return result
 
-        except Exception as error:
-            logger.error("❌ خطأ في محرك الإشارات أثناء تقييم الرمز {}: {}", symbol, error)
+        except Exception as e:
+            logger.error(
+                "❌ SignalEngine error for {}: {}", symbol, e
+            )
             return result
