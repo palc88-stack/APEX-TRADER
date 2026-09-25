@@ -14,12 +14,14 @@ class MarketDataManager:
     جلب بيانات السوق من المنصة الأساسية.
 
     لا يتم استخدام Binance بشكل إجباري.
+    يعمل كـ Cache Layer فوق ExchangeManager الموحد.
     """
 
     CACHE_SECONDS = 60
 
-    def __init__(self):
-        self._exchange: Optional[ccxt.Exchange] = None
+    def __init__(self, exchange_source: Optional["ExchangeManager"] = None):
+        self._exchange_source = exchange_source
+        self._exchange: Optional[ccxt.Exchange] = None  # fallback فقط
         self._exchange_name = (
             config.exchange.primary_exchange()
         )
@@ -120,14 +122,21 @@ class MarketDataManager:
         try:
             await self._load_markets()
 
-            if self._exchange is None:
+            # 1. استخدم الـ exchange_source الموحد أولاً (cache layer فوق exchange.py)
+            if self._exchange_source is not None:
+                raw_data = await self._exchange_source._exchange.fetch_ohlcv(
+                    symbol=self._normalize_symbol(symbol),
+                    timeframe=timeframe,
+                    limit=limit,
+                )
+            elif self._exchange is None:
                 return None
-
-            raw_data = await self._exchange.fetch_ohlcv(
-                symbol=self._normalize_symbol(symbol),
-                timeframe=timeframe,
-                limit=limit,
-            )
+            else:
+                raw_data = await self._exchange.fetch_ohlcv(
+                    symbol=self._normalize_symbol(symbol),
+                    timeframe=timeframe,
+                    limit=limit,
+                )
 
             if not raw_data:
                 logger.warning(

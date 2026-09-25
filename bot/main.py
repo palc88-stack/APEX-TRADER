@@ -29,8 +29,8 @@ class ApexTraderBot:
     def __init__(self):
         self.config = Config()
 
-        self.market_data = MarketDataManager()
         self.exchange = ExchangeManager(self.config)
+        self.market_data = MarketDataManager(exchange_source=self.exchange)
 
         self.indicators = IndicatorCalculator(self.config)
         self.filters = SignalFilters(self.config)

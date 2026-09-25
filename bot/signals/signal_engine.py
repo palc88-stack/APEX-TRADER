@@ -6,6 +6,8 @@ from loguru import logger
 
 from bot.signals.indicators import IndicatorCalculator, TechnicalIndicators
 from bot.signals.filters import SignalFilters
+from bot.strategies.explosion import ExplosionDetector, ExplosionSignal
+from bot.strategies.scalping import ScalpingStrategy
 
 
 class TradeDirection(str, Enum):
@@ -76,6 +78,9 @@ class SignalEngine:
         cfg_dict = config.__dict__ if hasattr(config, "__dict__") else {}
         self.indicator_calculator = IndicatorCalculator(cfg_dict)
         self.signal_filters = SignalFilters(cfg_dict)
+        # ✅ ربط الـ strategies الآن داخل المحرك
+        self.explosion_detector = ExplosionDetector()
+        self.scalping_strategy = ScalpingStrategy(cfg_dict)
 
     def evaluate_market(
         self,
@@ -123,6 +128,47 @@ class SignalEngine:
 
             is_trend_bullish = close > ema_200
             is_trend_bearish = close < ema_200
+
+            # ─ 1. ExplosionDetector: أعلى أولوية ─
+            explosion_signal = self.explosion_detector.detect(
+                df_analyzed, symbol
+            )
+            if explosion_signal and explosion_signal.is_valid:
+                direction = "BUY" if explosion_signal.direction == "LONG" else "SELL"
+                if self.signal_filters.validate_signal(direction, latest):
+                    result.update({
+                        "action": explosion_signal.direction,
+                        "strategy": "EXPLOSION",
+                        "confidence": explosion_signal.confidence,
+                        "reason": explosion_signal.reason
+                    })
+                    logger.info(
+                        "🚀 Explosion detected for {}: {} (confidence={:.2f})",
+                        symbol, direction, explosion_signal.confidence
+                    )
+                    return result
+
+            # ─ 2. ScalpingStrategy ─
+            scalp_result = self.scalping_strategy.evaluate_scalp_setup(
+                df_analyzed, symbol
+            )
+            if scalp_result["action"] != "HOLD":
+                action_dir = scalp_result["action"]
+                if self.signal_filters.validate_signal(action_dir, latest):
+                    result.update({
+                        "action": action_dir,
+                        "strategy": "SCALPING",
+                        "confidence": 0.80 if action_dir == "BUY" else 0.75,
+                        "reason": scalp_result["reason"]
+                    })
+                    logger.info(
+                        "⚡ Scalping signal for {}: {} | entry={} sl={} tp={}",
+                        symbol, action_dir,
+                        scalp_result["entry_price"],
+                        scalp_result["stop_loss"],
+                        scalp_result["take_profit"]
+                    )
+                    return result
 
             # ─ Scalping: أولوية لاستراتيجية البولنجر ─
             if close <= bb_lower and rsi < 35:

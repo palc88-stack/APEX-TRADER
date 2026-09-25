@@ -3,6 +3,7 @@ import os
 from typing import Any, Dict, Optional
 
 import ccxt.async_support as ccxt
+import pandas as pd
 from loguru import logger
 
 
@@ -81,6 +82,47 @@ class ExchangeManager:
         except Exception as e:
             logger.error("❌ get_balance: {}", e)
             return 0.0
+
+    async def get_ohlcv(
+        self,
+        symbol: str,
+        timeframe: str = "5m",
+        limit: int = 100,
+    ) -> Optional[pd.DataFrame]:
+        """جلب بيانات OHLCV — متوفرة للـ MarketDataManager كـ cache layer."""
+        try:
+            if not self._exchange:
+                raise RuntimeError("Exchange not initialized")
+            raw_data = await self._exchange.fetch_ohlcv(
+                symbol=symbol,
+                timeframe=timeframe,
+                limit=limit,
+            )
+            if not raw_data:
+                logger.warning("⚠️ No OHLCV data for {}", symbol)
+                return None
+            df = pd.DataFrame(
+                raw_data,
+                columns=[
+                    "timestamp",
+                    "open",
+                    "high",
+                    "low",
+                    "close",
+                    "volume",
+                ],
+            )
+            df["timestamp"] = pd.to_datetime(
+                df["timestamp"],
+                unit="ms",
+                utc=True,
+            )
+            for column in ["open", "high", "low", "close", "volume"]:
+                df[column] = df[column].astype(float)
+            return df
+        except Exception as e:
+            logger.error("❌ get_ohlcv {}: {}", symbol, e)
+            return None
 
     # ─── Orders ───────────────────────────────────────────────────────────────
 
