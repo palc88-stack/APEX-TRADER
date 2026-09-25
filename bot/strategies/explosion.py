@@ -1,362 +1,446 @@
-# ======================================
-# APEX TRADER - Explosion Detector
-# ======================================
-# كاشف الانفجارات السعرية
-# يرصد الحركات الحادة قبل وقوعها
-# بيانات حقيقية 100%
-
 from dataclasses import dataclass
-from typing import Optional, List
-import pandas as pd
-import numpy as np
-from loguru import logger
+from typing import Any, Optional
 
-from bot.signals.indicators import IndicatorResult
-from bot.config import config
+import pandas as pd
+from loguru import logger
 
 
 @dataclass
 class ExplosionSignal:
     """
-    إشارة انفجار سعري محتمل
+    إشارة انفجار سعري محتمل.
     """
-    symbol: str
-    direction: str              # up / down / unknown
-    score: float               # 0-1 قوة الإشارة
-    confidence: float          # 0-1 الثقة
 
-    # أسباب الكشف
+    symbol: str
+    direction: str
+    score: float
+    confidence: float
+
     squeeze_detected: bool = False
     volume_surge: bool = False
     volatility_expansion: bool = False
     liquidation_zone_nearby: bool = False
     momentum_acceleration: bool = False
 
-    # أهداف محتملة
     estimated_move_pct: float = 0.0
     key_level_above: float = 0.0
     key_level_below: float = 0.0
 
     @property
     def is_valid(self) -> bool:
-        """هل الانفجار مؤكد بما يكفي؟"""
-        return self.score >= 0.70 and self.confidence >= 0.65
+        return (
+            self.score >= 0.70
+            and self.confidence >= 0.65
+        )
 
 
 class ExplosionDetector:
     """
-    كاشف الانفجارات السعرية المتقدم
+    كاشف الحركات السعرية الحادة.
 
-    يرصد:
-    - BB Squeeze + كسر
-    - ارتفاع مفاجئ في الحجم
+    يعتمد على:
+    - Bollinger Band squeeze
+    - ارتفاع حجم التداول
     - تسارع الزخم
-    - مناطق التصفية القريبة
-    - نقاط السيولة الكبيرة
+    - توسع التقلب
     """
 
-    # حدود الكشف
-    VOLUME_SURGE_THRESHOLD = 3.0     # 3x المعدل
-    BB_SQUEEZE_RATIO = 0.70          # 70% من المعدل
-    MOMENTUM_THRESHOLD = 0.003       # 0.3% حركة سريعة
+    VOLUME_SURGE_THRESHOLD = 3.0
+    BB_SQUEEZE_RATIO = 0.70
+    MOMENTUM_THRESHOLD = 0.003
     MIN_SCORE_FOR_SIGNAL = 0.60
 
     def detect(
         self,
         symbol: str,
         df: pd.DataFrame,
-        indicators: IndicatorResult,
-        current_price: float
+        indicators: Any,
+        current_price: float,
     ) -> Optional[ExplosionSignal]:
         """
-        الكشف الكامل عن الانفجار المحتمل
+        اكتشاف انفجار سعري محتمل.
 
-        Args:
-            symbol: رمز العملة
-            df: بيانات الشموع الحقيقية
-            indicators: المؤشرات المحسوبة
-            current_price: السعر الحالي الحقيقي
-
-        Returns:
-            ExplosionSignal أو None
+        يستخدم Any لنوع indicators لأن المشروع لا يحتوي
+        على IndicatorResult فعلي. يجب أن يحتوي الكائن الممرر
+        على الخصائص التي تستخدمها الدوال أدناه.
         """
         try:
+            if df is None or df.empty:
+                return None
+
             signal = ExplosionSignal(
                 symbol=symbol,
                 direction="unknown",
                 score=0.0,
-                confidence=0.0
+                confidence=0.0,
             )
 
-            # فحوصات الانفجار
             self._check_bb_squeeze(
-                df, indicators, current_price, signal
-            )
-            self._check_volume_surge(df, indicators, signal)
-            self._check_momentum(df, current_price, signal)
-            self._check_volatility_expansion(indicators, signal)
-            self._estimate_targets(
-                df, current_price, indicators, signal
+                df,
+                indicators,
+                current_price,
+                signal,
             )
 
-            # حساب النقاط الكلية
-            score = self._calculate_score(signal)
-            signal.score = score
+            self._check_volume_surge(
+                df,
+                indicators,
+                signal,
+            )
+
+            self._check_momentum(
+                df,
+                current_price,
+                signal,
+            )
+
+            self._check_volatility_expansion(
+                indicators,
+                signal,
+            )
+
+            self._estimate_targets(
+                df,
+                current_price,
+                indicators,
+                signal,
+            )
+
+            signal.score = self._calculate_score(signal)
+
             signal.confidence = self._calculate_confidence(
-                signal, indicators
+                signal,
+                indicators,
             )
 
             if signal.score < self.MIN_SCORE_FOR_SIGNAL:
                 return None
 
-            # تحديد الاتجاه
             signal.direction = self._determine_direction(
-                df, indicators, current_price
+                df,
+                indicators,
+                current_price,
             )
 
             logger.info(
-                f"💥 انفجار محتمل: {symbol} | "
-                f"نقاط: {score:.2f} | "
-                f"اتجاه: {signal.direction} | "
-                f"حركة متوقعة: {signal.estimated_move_pct:.2f}%"
+                "💥 انفجار محتمل: {} | النقاط: {:.2f} | "
+                "الاتجاه: {} | الحركة المتوقعة: {:.2f}%",
+                symbol,
+                signal.score,
+                signal.direction,
+                signal.estimated_move_pct,
             )
 
             return signal
 
-        except Exception as e:
+        except Exception as error:
             logger.error(
-                f"❌ خطأ كشف انفجار {symbol}: {e}"
+                "❌ خطأ في كشف الانفجار للرمز {}: {}",
+                symbol,
+                error,
             )
             return None
 
     def _check_bb_squeeze(
         self,
         df: pd.DataFrame,
-        indicators: IndicatorResult,
+        indicators: Any,
         current_price: float,
-        signal: ExplosionSignal
+        signal: ExplosionSignal,
     ) -> None:
         """
-        فحص BB Squeeze + كسر النطاق
-
-        BB Squeeze = النطاق ضيق جداً
-        ثم السعر يكسر النطاق = انفجار
+        فحص Bollinger Band squeeze وكسر النطاق.
         """
-        if indicators.bb_squeeze:
-            # هل كسر السعر النطاق؟
-            if current_price > indicators.bb_upper:
-                signal.squeeze_detected = True
-                signal.direction = "up"
-                logger.debug(
-                    f"🔔 {signal.symbol}: BB Squeeze كسر للأعلى"
-                )
-            elif current_price < indicators.bb_lower:
-                signal.squeeze_detected = True
-                signal.direction = "down"
-                logger.debug(
-                    f"🔔 {signal.symbol}: BB Squeeze كسر للأسفل"
-                )
-            else:
-                # الضغط موجود لكن لم يكسر بعد
-                # انفجار قريب جداً!
-                signal.squeeze_detected = True
+        if not getattr(indicators, "bb_squeeze", False):
+            return
+
+        bb_upper = getattr(
+            indicators,
+            "bb_upper",
+            current_price,
+        )
+
+        bb_lower = getattr(
+            indicators,
+            "bb_lower",
+            current_price,
+        )
+
+        if current_price > bb_upper:
+            signal.squeeze_detected = True
+            signal.direction = "up"
+
+            logger.debug(
+                "🔔 {}: كسر Bollinger Band للأعلى",
+                signal.symbol,
+            )
+
+        elif current_price < bb_lower:
+            signal.squeeze_detected = True
+            signal.direction = "down"
+
+            logger.debug(
+                "🔔 {}: كسر Bollinger Band للأسفل",
+                signal.symbol,
+            )
+
+        else:
+            signal.squeeze_detected = True
 
     def _check_volume_surge(
         self,
         df: pd.DataFrame,
-        indicators: IndicatorResult,
-        signal: ExplosionSignal
+        indicators: Any,
+        signal: ExplosionSignal,
     ) -> None:
         """
-        فحص ارتفاع الحجم المفاجئ
-
-        حجم > 3x المعدل = نشاط غير عادي
+        فحص ارتفاع حجم التداول.
         """
-        if indicators.volume_ratio >= self.VOLUME_SURGE_THRESHOLD:
+        volume_ratio = float(
+            getattr(indicators, "volume_ratio", 0.0)
+        )
+
+        if volume_ratio >= self.VOLUME_SURGE_THRESHOLD:
             signal.volume_surge = True
 
             logger.debug(
-                f"🔔 {signal.symbol}: "
-                f"حجم x{indicators.volume_ratio:.1f}"
+                "🔔 {}: ارتفاع الحجم إلى {:.1f}x",
+                signal.symbol,
+                volume_ratio,
             )
 
-        # فحص اتجاه الحجم
-        if len(df) >= 3:
-            recent_volumes = df['volume'].tail(3).values
-            if (recent_volumes[-1] > recent_volumes[-2] >
-                    recent_volumes[-3]):
-                # حجم يتزايد = تسارع
+        if (
+            "volume" in df.columns
+            and len(df) >= 3
+        ):
+            recent_volumes = df["volume"].tail(3).values
+
+            if (
+                recent_volumes[-1] > recent_volumes[-2]
+                and recent_volumes[-2] > recent_volumes[-3]
+            ):
                 signal.volume_surge = True
 
     def _check_momentum(
         self,
         df: pd.DataFrame,
         current_price: float,
-        signal: ExplosionSignal
+        signal: ExplosionSignal,
     ) -> None:
         """
-        فحص تسارع الزخم
-
-        تحرك سريع في آخر 3 شموع = زخم قوي
+        فحص تسارع الزخم في آخر الشموع.
         """
-        if len(df) < 4:
+        if (
+            "close" not in df.columns
+            or len(df) < 4
+        ):
             return
 
-        # التغير في آخر 3 شموع
-        prices = df['close'].tail(4).values
+        prices = df["close"].tail(4).astype(float).values
+
+        if any(price == 0 for price in prices):
+            return
+
         changes = [
-            abs(prices[i] - prices[i-1]) / prices[i-1]
-            for i in range(1, 4)
+            abs(prices[index] - prices[index - 1])
+            / prices[index - 1]
+            for index in range(1, 4)
         ]
 
-        avg_change = sum(changes) / len(changes)
+        average_change = sum(changes) / len(changes)
 
-        if avg_change >= self.MOMENTUM_THRESHOLD:
-            signal.momentum_acceleration = True
+        if average_change < self.MOMENTUM_THRESHOLD:
+            return
 
-            # اتجاه الزخم
-            net_change = (prices[-1] - prices[0]) / prices[0]
-            if net_change > 0:
-                signal.direction = "up"
-            elif net_change < 0:
-                signal.direction = "down"
+        signal.momentum_acceleration = True
 
-            logger.debug(
-                f"🔔 {signal.symbol}: "
-                f"زخم {avg_change:.4f}"
-            )
+        net_change = (
+            prices[-1] - prices[0]
+        ) / prices[0]
+
+        if net_change > 0:
+            signal.direction = "up"
+        elif net_change < 0:
+            signal.direction = "down"
+
+        logger.debug(
+            "🔔 {}: تسارع الزخم {:.4f}",
+            signal.symbol,
+            average_change,
+        )
 
     def _check_volatility_expansion(
         self,
-        indicators: IndicatorResult,
-        signal: ExplosionSignal
+        indicators: Any,
+        signal: ExplosionSignal,
     ) -> None:
         """
-        فحص توسع التقلب
-
-        ATR مرتفع = تقلب متزايد = انفجار قريب
+        فحص توسع التقلب باستخدام ATR.
         """
-        # ATR% فوق 0.3% يشير لتقلب عالٍ
-        if indicators.atr_pct >= 0.30:
+        atr_pct = float(
+            getattr(indicators, "atr_pct", 0.0)
+        )
+
+        if atr_pct >= 0.30:
             signal.volatility_expansion = True
+
             logger.debug(
-                f"🔔 {signal.symbol}: "
-                f"تقلب {indicators.atr_pct:.3f}%"
+                "🔔 {}: التقلب {:.3f}%",
+                signal.symbol,
+                atr_pct,
             )
 
     def _estimate_targets(
         self,
         df: pd.DataFrame,
         current_price: float,
-        indicators: IndicatorResult,
-        signal: ExplosionSignal
+        indicators: Any,
+        signal: ExplosionSignal,
     ) -> None:
         """
-        تقدير أهداف الحركة المتوقعة
-        بناءً على بيانات حقيقية
+        تقدير مستويات الحركة المحتملة.
         """
-        # تقدير حجم الحركة من ATR
-        estimated_move = indicators.atr_pct * 3
-        signal.estimated_move_pct = round(estimated_move, 3)
+        atr_pct = float(
+            getattr(indicators, "atr_pct", 0.0)
+        )
 
-        # أعلى مستوى في آخر 20 شمعة
-        if len(df) >= 20:
-            recent_high = float(df['high'].tail(20).max())
-            recent_low = float(df['low'].tail(20).min())
+        signal.estimated_move_pct = round(
+            atr_pct * 3,
+            3,
+        )
 
-            signal.key_level_above = round(recent_high, 2)
-            signal.key_level_below = round(recent_low, 2)
+        if (
+            len(df) >= 20
+            and "high" in df.columns
+            and "low" in df.columns
+        ):
+            recent_high = float(
+                df["high"].tail(20).max()
+            )
+
+            recent_low = float(
+                df["low"].tail(20).min()
+            )
+
+            signal.key_level_above = round(
+                recent_high,
+                2,
+            )
+
+            signal.key_level_below = round(
+                recent_low,
+                2,
+            )
 
     def _calculate_score(
         self,
-        signal: ExplosionSignal
+        signal: ExplosionSignal,
     ) -> float:
-        """
-        حساب نقاط قوة الانفجار
-        """
         score = 0.0
 
         if signal.squeeze_detected:
-            score += 0.30    # أهم إشارة
+            score += 0.30
 
         if signal.volume_surge:
-            score += 0.25    # ثاني أهم
+            score += 0.25
 
         if signal.momentum_acceleration:
-            score += 0.25    # ثالث
+            score += 0.25
 
         if signal.volatility_expansion:
-            score += 0.20    # رابع
+            score += 0.20
 
         return min(score, 1.0)
 
     def _calculate_confidence(
         self,
         signal: ExplosionSignal,
-        indicators: IndicatorResult
+        indicators: Any,
     ) -> float:
-        """
-        حساب الثقة في الإشارة
-        عدد الإشارات المتوافقة
-        """
-        signals_count = sum([
-            signal.squeeze_detected,
-            signal.volume_surge,
-            signal.momentum_acceleration,
-            signal.volatility_expansion
-        ])
+        signals_count = sum(
+            [
+                signal.squeeze_detected,
+                signal.volume_surge,
+                signal.momentum_acceleration,
+                signal.volatility_expansion,
+            ]
+        )
 
-        base_confidence = signals_count / 4
+        confidence = signals_count / 4
 
-        # مكافأة إذا الاتجاه محدد
         if signal.direction != "unknown":
-            base_confidence += 0.10
+            confidence += 0.10
 
-        # مكافأة Hurst اتجاهي
-        if indicators.market_type == "trending":
-            base_confidence += 0.10
+        if getattr(
+            indicators,
+            "market_type",
+            None,
+        ) == "trending":
+            confidence += 0.10
 
-        return min(base_confidence, 1.0)
+        return min(confidence, 1.0)
 
     def _determine_direction(
         self,
         df: pd.DataFrame,
-        indicators: IndicatorResult,
-        current_price: float
+        indicators: Any,
+        current_price: float,
     ) -> str:
-        """
-        تحديد اتجاه الانفجار المتوقع
-        """
         bullish_signals = 0
         bearish_signals = 0
 
-        # EMA
-        if indicators.ema_9 > indicators.ema_21:
+        ema_9 = getattr(
+            indicators,
+            "ema_9",
+            0.0,
+        )
+
+        ema_21 = getattr(
+            indicators,
+            "ema_21",
+            0.0,
+        )
+
+        if ema_9 > ema_21:
             bullish_signals += 1
         else:
             bearish_signals += 1
 
-        # MACD
-        if indicators.macd_trend == "bullish":
+        macd_trend = getattr(
+            indicators,
+            "macd_trend",
+            None,
+        )
+
+        if macd_trend == "bullish":
             bullish_signals += 1
-        elif indicators.macd_trend == "bearish":
+        elif macd_trend == "bearish":
             bearish_signals += 1
 
-        # RSI
-        if indicators.rsi > 50:
+        rsi = float(
+            getattr(indicators, "rsi", 50.0)
+        )
+
+        if rsi > 50:
             bullish_signals += 1
         else:
             bearish_signals += 1
 
-        # موقع السعر من BB
-        if indicators.bb_position == "upper":
+        bb_position = getattr(
+            indicators,
+            "bb_position",
+            None,
+        )
+
+        if bb_position == "upper":
             bullish_signals += 1
-        elif indicators.bb_position == "lower":
+        elif bb_position == "lower":
             bearish_signals += 1
 
         if bullish_signals > bearish_signals:
             return "up"
-        elif bearish_signals > bullish_signals:
+
+        if bearish_signals > bullish_signals:
             return "down"
-        else:
-            return "unknown"
+
+        return "unknown"
