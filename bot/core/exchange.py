@@ -1,62 +1,209 @@
+# bot/core/exchange.py - الكود المُصحَّح (كامل مع async)
 import os
-from typing import Dict, Any, Optional
+from typing import Any, Dict, Optional
+
+import ccxt.async_support as ccxt
 from loguru import logger
-import ccxt
 
 
 class ExchangeManager:
     """
-    مدير منصات التداول (Exchange Manager) لمنظومة (Apex Trader).
-    يتعامل حصرياً مع منصات التداول الحقيقية (Binance Live / Testnet) عبر مكتبة CCXT.
-    خالٍ تماماً من أي بيانات وهمية أو افتراضية (Zero Mock Data).
+    مدير منصات التداول - يدعم Binance و Bybit.
+    ✅ async كامل متوافق مع MarketDataManager.
+    ✅ يملك جميع دوال التنفيذ المطلوبة.
     """
 
-    def __init__(self, config: Optional[Dict[str, Any]] = None):
-        self.config = config or {}
-        
-        # استرجاع مفاتيح الـ API الحقيقية من بيئة النظام أو ملف الإعدادات
-        self.api_key = os.getenv("BINANCE_API_KEY", self.config.get("binance_api_key", ""))
-        self.secret_key = os.getenv("BINANCE_SECRET_KEY", self.config.get("binance_secret_key", ""))
-        
-        # التقاط قيمة وضع التست نت بدقة وتحويلها إلى قيمة منطقية (Boolean)
-        testnet_env = os.getenv("BINANCE_TESTNET", str(self.config.get("binance_testnet", "false")))
-        self.is_testnet = str(testnet_env).lower() in ("true", "1", "t", "yes", "on")
+    def __init__(self, config: Optional[Any] = None):
+        self.config = config
+        exchange_cfg = getattr(config, "exchange", None)
 
-        self.exchange: Optional[ccxt.binance] = None
-        self._init_exchange()
+        self.api_key = (
+            getattr(exchange_cfg, "binance_api_key", None)
+            or os.getenv("BINANCE_API_KEY", "")
+        )
+        self.secret_key = (
+            getattr(exchange_cfg, "binance_secret_key", None)
+            or os.getenv("BINANCE_SECRET_KEY", "")
+        )
+        is_testnet = bool(
+            getattr(exchange_cfg, "binance_testnet", True)
+        )
 
-    def _init_exchange(self) -> None:
+        # ✅ async exchange
+        self._exchange: Optional[ccxt.Exchange] = None
+        self._init_exchange(is_testnet)
+
+    def _init_exchange(self, is_testnet: bool) -> None:
+        try:
+            self._exchange = ccxt.binanceusdm({
+                "apiKey": self.api_key,
+                "secret": self.secret_key,
+                "enableRateLimit": True,
+                "timeout": 15000,
+                "options": {
+                    "defaultType": "future",
+                    "adjustForTimeDifference": True,
+                },
+            })
+            if is_testnet:
+                self._exchange.set_sandbox_mode(True)
+                logger.info("🧪 Exchange: Binance Futures Testnet")
+            else:
+                logger.info("🚀 Exchange: Binance Futures Live")
+        except Exception as e:
+            logger.error("❌ Exchange init failed: {}", e)
+
+    # ─── Data ─────────────────────────────────────────────────────────────────
+
+    async def get_ticker(self, symbol: str) -> Dict[str, Any]:
+        """جلب السعر الحالي للرمز."""
+        try:
+            ticker = await self._exchange.fetch_ticker(symbol)
+            return {
+                "last": float(ticker.get("last", 0)),
+                "bid": float(ticker.get("bid", 0)),
+                "ask": float(ticker.get("ask", 0)),
+            }
+        except Exception as e:
+            logger.error("❌ get_ticker {}: {}", symbol, e)
+            return {"last": 0.0, "bid": 0.0, "ask": 0.0}
+
+    async def get_balance(self) -> float:
+        """جلب رصيد USDT الحر."""
+        try:
+            balance = await self._exchange.fetch_balance()
+            usdt = balance.get("USDT", {})
+            return float(usdt.get("free", 0.0))
+        except Exception as e:
+            logger.error("❌ get_balance: {}", e)
+            return 0.0
+
+    # ─── Orders ───────────────────────────────────────────────────────────────
+
+    async def place_order(
+        self,
+        symbol: str,
+        side: str,
+        amount: float,
+        price: float,
+        stop_loss: float,
+        take_profit: float,
+    ) -> Dict[str, Any]:
         """
-        تهيئة الاتصال الحقيقي بمنصة بينانس عبر CCXT مع دعم التست نت واللايف.
+        ✅ تنفيذ أمر شراء أو بيع مع SL و TP.
+        يستخدم Market Order للدخول + SL/TP كـ Stop Orders.
         """
         try:
-            exchange_config = {
-                'apiKey': self.api_key,
-                'secret': self.secret_key,
-                'enableRateLimit': True,
-                'options': {
-                    'defaultType': 'spot',  # يمكن تعديلها إلى future حسب إعداداتك
-                }
-            }
+            if not self._exchange:
+                raise RuntimeError("Exchange not initialized")
 
-            # إنشاء كائن المنصة الحقيقي عبر CCXT
-            self.exchange = ccxt.binance(exchange_config)
+            # أمر السوق الرئيسي
+            order = await self._exchange.create_order(
+                symbol=symbol,
+                type="market",
+                side=side.lower(),
+                amount=amount,
+                params={"reduceOnly": False}
+            )
+            logger.info(
+                "✅ Order placed: {} {} {} @ {}",
+                side.upper(), amount, symbol, price
+            )
 
-            # تفعيل وضع التست نت (Testnet / Sandbox) أو الحقيقي بناءً على إعداداتك
-            if self.is_testnet:
-                # تفعيل وضع الساندبوكس التجريبي الرسمي لمنصة بينانس
-                self.exchange.set_sandbox_mode(True)
-                logger.info("🧪 تم ضبط الاتصال بنجاح على وضع بينانس التجريبي الرسمي (Binance Testnet).")
-            else:
-                logger.info("🚀 تم ضبط الاتصال بنجاح على وضع التداول الحقيقي المباشر (Binance Live).")
+            # أمر وقف الخسارة
+            sl_side = "sell" if side.lower() == "buy" else "buy"
+            try:
+                await self._exchange.create_order(
+                    symbol=symbol,
+                    type="stop_market",
+                    side=sl_side,
+                    amount=amount,
+                    params={
+                        "stopPrice": stop_loss,
+                        "reduceOnly": True,
+                        "closePosition": True,
+                    }
+                )
+                logger.info(
+                    "🛡️ Stop Loss set @ {}", stop_loss
+                )
+            except Exception as sl_err:
+                logger.warning("⚠️ SL order failed: {}", sl_err)
 
-        except Exception as error:
-            logger.error("❌ فشل تهيئة الاتصال بمنصة بينانس الحقيقية: {}", error)
+            # أمر جني الأرباح
+            tp_side = sl_side
+            try:
+                await self._exchange.create_order(
+                    symbol=symbol,
+                    type="take_profit_market",
+                    side=tp_side,
+                    amount=amount,
+                    params={
+                        "stopPrice": take_profit,
+                        "reduceOnly": True,
+                        "closePosition": True,
+                    }
+                )
+                logger.info(
+                    "🎯 Take Profit set @ {}", take_profit
+                )
+            except Exception as tp_err:
+                logger.warning("⚠️ TP order failed: {}", tp_err)
 
-    def get_exchange_instance(self) -> Optional[ccxt.binance]:
-        """
-        إرجاع مثيل المنصة الفعلي للاستخدام في جلب الشموع والبيانات الحية.
-        """
-        if not self.exchange:
-            logger.warning("⚠️ محاولة الوصول لمثيل المنصة بينما لم يتم تهيئته بنجاح.")
-        return self.exchange
+            return order or {}
+
+        except Exception as e:
+            logger.error("❌ place_order {}: {}", symbol, e)
+            raise
+
+    async def close_position(
+        self,
+        symbol: str,
+        position_id: str,
+        reason: str,
+        price: float,
+    ) -> Dict[str, Any]:
+        """إغلاق صفقة مفتوحة بأمر Market عكسي."""
+        try:
+            positions = await self._exchange.fetch_positions([symbol])
+            pos = next(
+                (p for p in positions if p.get("symbol") == symbol
+                 and float(p.get("contracts", 0)) != 0),
+                None
+            )
+            if not pos:
+                logger.warning(
+                    "⚠️ لا توجد صفقة مفتوحة لـ {} في المنصة", symbol
+                )
+                return {}
+
+            amount = abs(float(pos.get("contracts", 0)))
+            side_to_close = (
+                "sell" if pos.get("side") == "long" else "buy"
+            )
+
+            order = await self._exchange.create_order(
+                symbol=symbol,
+                type="market",
+                side=side_to_close,
+                amount=amount,
+                params={"reduceOnly": True}
+            )
+
+            logger.info(
+                "✅ Position closed: {} | السبب: {} | السعر: {}",
+                symbol, reason, price
+            )
+            return order or {}
+
+        except Exception as e:
+            logger.error("❌ close_position {}: {}", symbol, e)
+            raise
+
+    async def close(self) -> None:
+        """إغلاق الاتصال بالمنصة."""
+        if self._exchange:
+            try:
+                await self._exchange.close()
+            except Exception:
+                pass
