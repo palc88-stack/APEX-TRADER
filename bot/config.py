@@ -73,6 +73,20 @@ class ExchangeConfig:
         """إرجاع اسم المنصة الأساسية lowercase"""
         return self._primary_exchange.lower()
 
+    def enabled_exchanges(self) -> list[str]:
+        """إرجاع قائمة المنصات المفعلة بناءً على وجود مفاتيح API"""
+        enabled = []
+        if self.binance_api_key and self.binance_secret_key:
+            enabled.append("binance")
+        if self.bybit_api_key and self.bybit_secret_key:
+            enabled.append("bybit")
+        if not enabled:
+            #DEFAULT →Trading_exchanges البيئة إذا وُضعت
+            env_exchanges = _env_text("TRADING_EXCHANGES", "")
+            if env_exchanges:
+                enabled = [e.strip().lower() for e in env_exchanges.split(",") if e.strip()]
+        return enabled or ["binance"]
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Database (Supabase)
