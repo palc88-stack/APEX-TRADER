@@ -51,7 +51,13 @@ class ExchangeManager:
             self._exchange = ccxt.binanceusdm(exchange_params)
             if is_testnet:
                 self._exchange.set_sandbox_mode(True)
-                logger.info("🧪 Exchange: Binance Futures Testnet (no API keys — public data only)")
+                if self.api_key and self.secret_key:
+                    logger.info("✅ Binance Testnet: المفاتيح متاحة، يمكن تنفيذ صفقات حقيقية")
+                else:
+                    logger.warning(
+                        "⚠️ Binance Testnet: بدون مفاتيح API — لا يمكن فتح صفقات. "
+                        f"قم بتعيين BINANCE_API_KEY و BINANCE_SECRET_KEY"
+                    )
             else:
                 logger.info("🚀 Exchange: Binance Futures Live")
         except Exception as e:
