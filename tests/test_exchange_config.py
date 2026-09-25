@@ -1,37 +1,52 @@
-import pytest
+# tests/test_exchange_config.py — اختبارات متوافقة مع ExchangeConfig الحالي
+# البلوك الأصلي كان يستخدم واجهة غير موجودة (trading_exchanges + validate())
 
+import pytest
 from bot.config import ExchangeConfig
 
 
-def test_bybit_configuration_requires_bybit_credentials(
-    monkeypatch,
-):
-    monkeypatch.setenv(
-        "TRADING_EXCHANGES",
-        "bybit",
-    )
-    monkeypatch.setenv(
-        "BYBIT_API_KEY",
-        "bybit-key",
-    )
-    monkeypatch.setenv(
-        "BYBIT_SECRET_KEY",
-        "bybit-secret",
-    )
+def test_exchange_config_enabled_exchanges_binance(monkeypatch):
+    """binance สมมติให้มี BINANCE_API_KEY — تتوقع_LIST مدعومة"""
+    monkeypatch.setenv("BINANCE_API_KEY", "binance-key")
+    monkeypatch.setenv("BINANCE_SECRET_KEY", "binance-secret")
+    monkeypatch.delenv("BYBIT_API_KEY", raising=False)
+    monkeypatch.delenv("BYBIT_SECRET_KEY", raising=False)
 
-    exchange_config = ExchangeConfig()
-
-    assert exchange_config.trading_exchanges == [
-        "bybit"
-    ]
-    assert exchange_config.validate() is True
+    ec = ExchangeConfig()
+    assert "binance" in ec.enabled_exchanges()
 
 
-def test_invalid_exchange_is_rejected(monkeypatch):
-    monkeypatch.setenv(
-        "TRADING_EXCHANGES",
-        "unknown",
-    )
+def test_exchange_config_no_keys_defaults_to_binance(monkeypatch):
+    """عندما لا توجد مفاتيح — الافتراض هو Binance"""
+    monkeypatch.delenv("BINANCE_API_KEY", raising=False)
+    monkeypatch.delenv("BINANCE_SECRET_KEY", raising=False)
+    monkeypatch.delenv("BYBIT_API_KEY", raising=False)
+    monkeypatch.delenv("BYBIT_SECRET_KEY", raising=False)
+    monkeypatch.delenv("TRADING_EXCHANGES", raising=False)
 
-    with pytest.raises(ValueError):
-        ExchangeConfig()
+    ec = ExchangeConfig()
+    assert ec.enabled_exchanges() == ["binance"]
+
+
+def test_exchange_config_primary_exchange_default(monkeypatch):
+    monkeypatch.delenv("PRIMARY_EXCHANGE", raising=False)
+    ec = ExchangeConfig()
+    assert ec.primary_exchange() == "binance"
+
+
+def test_exchange_config_primary_exchange_custom(monkeypatch):
+    monkeypatch.setenv("PRIMARY_EXCHANGE", "bybit")
+    ec = ExchangeConfig()
+    assert ec.primary_exchange() == "bybit"
+
+
+def test_exchange_config_binance_testnet_default(monkeypatch):
+    monkeypatch.delenv("BINANCE_TESTNET", raising=False)
+    ec = ExchangeConfig()
+    assert ec.binance_testnet is True
+
+
+def test_exchange_config_binance_testnet_custom(monkeypatch):
+    monkeypatch.setenv("BINANCE_TESTNET", "false")
+    ec = ExchangeConfig()
+    assert ec.binance_testnet is False

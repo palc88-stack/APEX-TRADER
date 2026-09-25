@@ -255,3 +255,33 @@ class ApexTraderBot:
             await self.state_manager.mark_bot_stopped()
         except Exception:
             pass
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Entry point — يُستدعى عند `python -m bot.main`
+# ─────────────────────────────────────────────────────────────────────────────
+if __name__ == "__main__":
+    import asyncio
+    import sys
+
+    # إعادة توجيه loguru إلى stdout حتى تظهر في سجلات الـ workflow
+    from loguru import logger as _logger
+    _logger.remove()
+    _logger.add(
+        sys.stdout,
+        format="<level>{level}</level> | {message}",
+        level=0,
+        colorize=False,
+    )
+
+    async def _main():
+        _logger.info("🚀 بدء تشغيل APEX TRADER...")
+        bot = ApexTraderBot()
+        try:
+            await bot.run_forever(interval_seconds=60)
+        except KeyboardInterrupt:
+            _logger.info("⛔ توقف يدوياً")
+        except Exception as e:
+            _logger.error(f"❌ خطأ fatal: {e}", exc_info=True)
+
+    asyncio.run(_main())

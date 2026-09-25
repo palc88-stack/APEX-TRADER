@@ -1,0 +1,551 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>APEX Trader — خارطة النظام المترابطة</title>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: 'JetBrains Mono', monospace;
+      background: #020617;
+      min-height: 100vh;
+      padding: 2rem;
+      color: white;
+    }
+    .container { max-width: 1400px; margin: 0 auto; }
+    .header { margin-bottom: 2rem; }
+    .header-row { display: flex; align-items: center; gap: 1rem; margin-bottom: 0.5rem; }
+    .pulse-dot { width: 12px; height: 12px; background: #22d3ee; border-radius: 50%; animation: pulse 2s infinite; }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+    h1 { font-size: 1.5rem; font-weight: 700; letter-spacing: -0.025em; }
+    .subtitle { color: #94a3b8; font-size: 0.875rem; margin-left: 1.75rem; }
+    .diagram-container {
+      background: rgba(15, 23, 42, 0.5);
+      border-radius: 1rem;
+      border: 1px solid #1e293b;
+      padding: 1.5rem;
+      overflow-x: auto;
+    }
+    svg { width: 100%; min-width: 1200px; display: block; }
+    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem; margin-top: 2rem; }
+    .card {
+      background: rgba(15, 23, 42, 0.5);
+      border-radius: 0.75rem;
+      border: 1px solid #1e293b;
+      padding: 1.25rem;
+    }
+    .card-header { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.75rem; }
+    .card-dot { width: 8px; height: 8px; border-radius: 50%; }
+    .card-dot.cyan { background: #22d3ee; }
+    .card-dot.emerald { background: #34d399; }
+    .card-dot.violet { background: #a78bfa; }
+    .card-dot.amber { background: #fbbf24; }
+    .card-dot.rose { background: #fb7185; }
+    .card h3 { font-size: 0.875rem; font-weight: 600; }
+    .card ul { list-style: none; color: #94a3b8; font-size: 0.75rem; }
+    .card li { margin-bottom: 0.375rem; }
+    .footer { text-align: center; margin-top: 1.5rem; color: #475569; font-size: 0.75rem; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div class="header-row">
+        <div class="pulse-dot"></div>
+        <h1>APEX Trader — خارطة النظام المترابطة</h1>
+      </div>
+      <p class="subtitle">بنية البوت التداولي • pipeline الاختبارات • GitHub Actions CI/CD • جميع العلاقات التكاملية بدون انقطاع</p>
+    </div>
+
+    <div class="diagram-container">
+      <svg viewBox="0 0 1300 900">
+        <defs>
+          <marker id="arrow" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" fill="#64748b"/>
+          </marker>
+          <marker id="arrow-green" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" fill="#34d399"/>
+          </marker>
+          <marker id="arrow-cyan" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" fill="#22d3ee"/>
+          </marker>
+          <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+            <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1e293b" stroke-width="0.5"/>
+          </pattern>
+        </defs>
+
+        <rect width="100%" height="100%" fill="url(#grid)"/>
+
+        <!-- ═══════════════════════════════════════════
+             المنطقة: GITHUB ACTIONS (CI/CD)
+             ═══════════════════════════════════════════ -->
+        <rect x="20" y="20" width="520" height="200" rx="10" fill="rgba(251,191,36,0.04)" stroke="#fbbf24" stroke-width="1" stroke-dasharray="8,4"/>
+        <text x="32" y="38" fill="#fbbf24" font-size="10" font-weight="600">🔄 GitHub Actions — CI/CD Pipeline</text>
+        <text x="32" y="54" fill="#94a3b8" font-size="8">cron: "0,15,30,45 * * * *" | workflow_dispatch</text>
+
+        <!-- Octocat / Trigger -->
+        <rect x="40" y="70" width="100" height="55" rx="6" fill="rgba(120,53,15,0.3)" stroke="#fbbf24" stroke-width="1.5"/>
+        <text x="90" y="92" fill="white" font-size="11" font-weight="600" text-anchor="middle">GitHub</text>
+        <text x="90" y="108" fill="#94a3b8" font-size="9" text-anchor="middle">Repository</text>
+        <text x="90" y="122" fill="#94a3b8" font-size="8" text-anchor="middle">palc88-stack/APEX-TRADER</text>
+
+        <!-- Steps box -->
+        <rect x="160" y="70" width="360" height="135" rx="6" fill="rgba(15,23,42,0.6)" stroke="#34d399" stroke-width="1.5"/>
+        <text x="172" y="90" fill="#34d399" font-size="9" font-weight="600">📋 Pipeline Steps</text>
+
+        <!-- Step 1 -->
+        <rect x="170" y="100" width="170" height="28" rx="4" fill="rgba(52,211,153,0.12)" stroke="#34d399" stroke-width="0.8"/>
+        <text x="178" y="114" fill="white" font-size="8">✅ checkout@v4</text>
+        <text x="178" y="124" fill="#94a3b8" font-size="7">Checkout repo</text>
+
+        <!-- Step 2 -->
+        <rect x="170" y="132" width="170" height="28" rx="4" fill="rgba(52,211,153,0.12)" stroke="#34d399" stroke-width="0.8"/>
+        <text x="178" y="146" fill="white" font-size="8">✅ setup-python 3.11</text>
+        <text x="178" y="156" fill="#94a3b8" font-size="7">cache: pip</text>
+
+        <!-- Step 3 -->
+        <rect x="170" y="164" width="170" height="28" rx="4" fill="rgba(52,211,153,0.12)" stroke="#34d399" stroke-width="0.8"/>
+        <text x="178" y="178" fill="white" font-size="8">✅ pip install -r reqs</text>
+        <text x="178" y="188" fill="#94a3b8" font-size="7">+ pip check</text>
+
+        <!-- Step 4 - highlighted -->
+        <rect x="170" y="196" width="170" height="28" rx="4" fill="rgba(52,211,153,0.2)" stroke="#34d399" stroke-width="1.2"/>
+        <text x="178" y="210" fill="#34d399" font-size="8" font-weight="600">✅ pytest tests/ -x -q</text>
+        <text x="178" y="220" fill="#34d399" font-size="7">15 passed, 4 skipped</text>
+
+        <!-- Step 5 - conditional -->
+        <rect x="345" y="100" width="170" height="28" rx="4" fill="rgba(251,191,36,0.12)" stroke="#fbbf24" stroke-width="0.8" stroke-dasharray="3,2"/>
+        <text x="353" y="114" fill="#fbbf24" font-size="8">🔐 if BINANCE_API_KEY</text>
+        <text x="353" y="124" fill="#94a3b8" font-size="7">Run bot.main (optional)</text>
+
+        <!-- Step 6 -->
+        <rect x="345" y="132" width="170" height="28" rx="4" fill="rgba(52,211,153,0.12)" stroke="#34d399" stroke-width="0.8"/>
+        <text x="353" y="146" fill="white" font-size="8">✅ compileall -q bot tests</text>
+        <text x="353" y="156" fill="#94a3b8" font-size="7">Syntax check</text>
+
+        <!-- Step 7 -->
+        <rect x="345" y="164" width="170" height="28" rx="4" fill="rgba(52,211,153,0.12)" stroke="#34d399" stroke-width="0.8"/>
+        <text x="353" y="178" fill="white" font-size="8">✅ upload-artifact</text>
+        <text x="353" y="188" fill="#94a3b8" font-size="7">logs/ on failure</text>
+
+        <!-- 화살표: GitHub → Steps -->
+        <line x1="140" y1="97" x2="158" y2="97" stroke="#fbbf24" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+        <!-- ═══════════════════════════════════════════
+             المنطقة: بنية البوت الداخلية (Bot Modules)
+             ═══════════════════════════════════════════ -->
+        <rect x="20" y="240" width="520" height="580" rx="10" fill="rgba(52,211,153,0.03)" stroke="#34d399" stroke-width="1" stroke-dasharray="6,3"/>
+        <text x="32" y="258" fill="#34d399" font-size="10" font-weight="600">🧠 بوت التداول — البنية الداخلية (bot/)</text>
+        <text x="32" y="274" fill="#94a3b8" font-size="8">جميع الموديولات مترابطة عبر __main__.py | Exchanges · Risk · Signals · Positions · Data · Notifications</text>
+
+        <!-- ├── bot/main.py (ال중심) -->
+        <rect x="40" y="290" width="130" height="70" rx="8" fill="rgba(6,78,59,0.4)" stroke="#34d399" stroke-width="2"/>
+        <text x="105" y="312" fill="white" font-size="11" font-weight="700" text-anchor="middle">bot/main.py</text>
+        <text x="105" y="330" fill="#94a3b8" font-size="9" text-anchor="middle">ApexTraderBot</text>
+        <text x="105" y="346" fill="#34d399" font-size="8" text-anchor="middle">__main__ entry point ✅</text>
+
+        <!-- ├── bot/config.py -->
+        <rect x="185" y="290" width="110" height="70" rx="6" fill="rgba(76,29,149,0.4)" stroke="#a78bfa" stroke-width="1.5"/>
+        <text x="240" y="312" fill="white" font-size="11" font-weight="600" text-anchor="middle">bot/config.py</text>
+        <text x="240" y="330" fill="#94a3b8" font-size="9" text-anchor="middle">ExchangeConfig</text>
+        <text x="240" y="346" fill="#a78bfa" font-size="8" text-anchor="middle">enabled_exchanges() ✅</text>
+
+        <!-- ├── bot/data/ -->
+        <rect x="310" y="290" width="100" height="70" rx="6" fill="rgba(8,51,68,0.4)" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="360" y="312" fill="white" font-size="11" font-weight="600" text-anchor="middle">bot/data/</text>
+        <text x="360" y="330" fill="#94a3b8" font-size="9" text-anchor="middle">market_data.py</text>
+        <text x="360" y="346" fill="#94a3b8" font-size="8" text-anchor="middle">state_manager.py</text>
+
+        <!-- ├── bot/core/ -->
+        <rect x="425" y="290" width="100" height="70" rx="6" fill="rgba(6,78,59,0.4)" stroke="#34d399" stroke-width="1.5"/>
+        <text x="475" y="312" fill="white" font-size="11" font-weight="600" text-anchor="middle">bot/core/</text>
+        <text x="475" y="330" fill="#94a3b8" font-size="9" text-anchor="middle">exchange.py</text>
+        <text x="475" y="346" fill="#94a3b8" font-size="8" text-anchor="middle">risk_manager.py</text>
+
+        <!-- ├── bot/signals/ -->
+        <rect x="545" y="290" width="100" height="70" rx="6" fill="rgba(6,78,59,0.4)" stroke="#34d399" stroke-width="1.5"/>
+        <text x="595" y="312" fill="white" font-size="11" font-weight="600" text-anchor="middle">bot/signals/</text>
+        <text x="595" y="330" fill="#94a3b8" font-size="9" text-anchor="middle">signal_engine.py</text>
+        <text x="595" y="346" fill="#94a3b8" font-size="8" text-anchor="middle">indicators.py</text>
+
+        <!-- ├── bot/strategies/ -->
+        <rect x="40" y="375" width="110" height="55" rx="6" fill="rgba(8,51,68,0.4)" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="95" y="397" fill="white" font-size="11" font-weight="600" text-anchor="middle">bot/strategies/</text>
+        <text x="95" y="413" fill="#94a3b8" font-size="9" text-anchor="middle">explosion.py</text>
+        <text x="95" y="427" fill="#94a3b8" font-size="8" text-anchor="middle">scalping.py</text>
+
+        <!-- ├── bot/notifications/ -->
+        <rect x="165" y="375" width="120" height="55" rx="6" fill="rgba(251,146,60,0.3)" stroke="#fb923c" stroke-width="1.5"/>
+        <text x="225" y="397" fill="white" font-size="11" font-weight="600" text-anchor="middle">bot/notifications/</text>
+        <text x="225" y="413" fill="#94a3b8" font-size="9" text-anchor="middle">telegram_notifier.py</text>
+        <text x="225" y="427" fill="#94a3b8" font-size="8" text-anchor="middle">send_startup() ✅</text>
+
+        <!-- ├── bot/core/ (تحت) -->
+        <rect x="300" y="375" width="120" height="55" rx="6" fill="rgba(6,78,59,0.4)" stroke="#34d399" stroke-width="1.5"/>
+        <text x="360" y="397" fill="white" font-size="11" font-weight="600" text-anchor="middle">bot/core/</text>
+        <text x="360" y="413" fill="#94a3b8" font-size="9" text-anchor="middle">position_manager.py</text>
+        <text x="360" y="427" fill="#94a3b8" font-size="8" text-anchor="middle">fee_calculator.py</text>
+
+        <!-- ├── tests/ -->
+        <rect x="445" y="375" width="110" height="55" rx="6" fill="rgba(136,19,55,0.3)" stroke="#fb7185" stroke-width="1.5"/>
+        <text x="500" y="397" fill="white" font-size="11" font-weight="600" text-anchor="middle">tests/</text>
+        <text x="500" y="413" fill="#94a3b8" font-size="9" text-anchor="middle">test_*.py (4 files)</text>
+        <text x="500" y="427" fill="#fb7185" font-size="8" text-anchor="middle">pytest ✅ 15/15 pass</text>
+
+        <!-- ├── .github/ -->
+        <rect x="570" y="375" width="110" height="55" rx="6" fill="rgba(120,53,15,0.3)" stroke="#fbbf24" stroke-width="1.5"/>
+        <text x="625" y="397" fill="white" font-size="11" font-weight="600" text-anchor="middle">.github/</text>
+        <text x="625" y="413" fill="#94a3b8" font-size="9" text-anchor="middle">workflows/binance.yml</text>
+        <text x="625" y="427" fill="#fbbf24" font-size="8" text-anchor="middle">cron + dispatch ✅</text>
+
+        <!-- ═══════════════════════════════════════════
+             الأسهم الداخلية (Internal Connections)
+             ═══════════════════════════════════════════ -->
+
+        <!-- main.py → كل الموديولات (ارتياد متعدد) -->
+        <line x1="105" y1="360" x2="105" y2="375" stroke="#34d399" stroke-width="1.5" marker-end="url(#arrow-green)"/>
+        <line x1="240" y1="360" x2="240" y2="375" stroke="#34d399" stroke-width="1.5" marker-end="url(#arrow-green)"/>
+        <line x1="360" y1="360" x2="360" y2="375" stroke="#34d399" stroke-width="1.5" marker-end="url(#arrow-green)"/>
+        <line x1="475" y1="360" x2="475" y2="375" stroke="#34d399" stroke-width="1.5" marker-end="url(#arrow-green)"/>
+        <line x1="595" y1="360" x2="595" y2="375" stroke="#34d399" stroke-width="1.5" marker-end="url(#arrow-green)"/>
+
+        <!-- main.py → strategies -->
+        <line x1="95" y1="430" x2="165" y2="402" stroke="#22d3ee" stroke-width="1.2" marker-end="url(#arrow-cyan)" stroke-dasharray="4,3"/>
+
+        <!-- main.py → notifications -->
+        <line x1="105" y1="360" x2="225" y2="402" stroke="#fb923c" stroke-width="1.2" marker-end="url(#arrow)" stroke-dasharray="4,3"/>
+
+        <!-- main.py → core/ (position + fee) -->
+        <line x1="105" y1="360" x2="360" y2="402" stroke="#34d399" stroke-width="1.2" marker-end="url(#arrow-green)" stroke-dasharray="4,3"/>
+
+        <!-- tests → كل الموديولات -->
+        <line x1="500" y1="430" x2="95" y2="430" stroke="#fb7185" stroke-width="1" marker-end="url(#arrow)" stroke-dasharray="3,2"/>
+        <text x="290" y="426" fill="#fb7185" font-size="7">اختبار</text>
+
+        <line x1="500" y1="430" x2="240" y2="430" stroke="#fb7185" stroke-width="1" marker-end="url(#arrow)" stroke-dasharray="3,2"/>
+        <text x="365" y="426" fill="#fb7185" font-size="7">اختبار</text>
+
+        <line x1="500" y1="430" x2="360" y2="430" stroke="#fb7185" stroke-width="1" marker-end="url(#arrow)" stroke-dasharray="3,2"/>
+        <text x="425" y="426" fill="#fb7185" font-size="7">اختبار</text>
+
+        <line x1="500" y1="430" x2="475" y2="430" stroke="#fb7185" stroke-width="1" marker-end="url(#arrow)" stroke-dasharray="3,2"/>
+        <text x="488" y="426" fill="#fb7185" font-size="7">اختبار</text>
+
+        <line x1="500" y1="430" x2="595" y2="430" stroke="#fb7185" stroke-width="1" marker-end="url(#arrow)" stroke-dasharray="3,2"/>
+        <text x="545" y="426" fill="#fb7185" font-size="7">اختبار</text>
+
+        <!-- workflow → tests -->
+        <line x1="625" y1="430" x2="500" y2="430" stroke="#fbbf24" stroke-width="1.5" marker-end="url(#arrow)"/>
+        <text x="562" y="424" fill="#fbbf24" font-size="7">pytest</text>
+
+        <!-- ═══════════════════════════════════════════
+             المنطقة: الخدمات الخارجية (External Services)
+             ═══════════════════════════════════════════ -->
+        <rect x="560" y="20" width="720" height="180" rx="10" fill="rgba(148,163,184,0.04)" stroke="#94a3b8" stroke-width="1" stroke-dasharray="6,3"/>
+        <text x="572" y="38" fill="#94a3b8" font-size="10" font-weight="600">🌐 الخدمات الخارجية (External Services)</text>
+        <text x="572" y="54" fill="#94a3b8" font-size="8">Binance · Supabase · Redis · Telegram · Cloudflare Workers</text>
+
+        <!-- Binance -->
+        <rect x="580" y="70" width="150" height="70" rx="8" fill="rgba(120,53,15,0.3)" stroke="#fbbf24" stroke-width="1.5"/>
+        <text x="655" y="92" fill="white" font-size="12" font-weight="700" text-anchor="middle">Binance</text>
+        <text x="655" y="110" fill="#94a3b8" font-size="9" text-anchor="middle">Futures Testnet / Live</text>
+        <text x="655" y="124" fill="#fbbf24" font-size="8" text-anchor="middle">ccxt · FAPI v1</text>
+
+        <!-- Supabase -->
+        <rect x="745" y="70" width="150" height="70" rx="8" fill="rgba(76,29,149,0.4)" stroke="#a78bfa" stroke-width="1.5"/>
+        <text x="820" y="92" fill="white" font-size="12" font-weight="700" text-anchor="middle">Supabase</text>
+        <text x="820" y="110" fill="#94a3b8" font-size="9" text-anchor="middle">PostgreSQL</text>
+        <text x="820" y="124" fill="#a78bfa" font-size="8" text-anchor="middle">bot_state / trades</text>
+
+        <!-- Redis -->
+        <rect x="910" y="70" width="140" height="70" rx="8" fill="rgba(251,146,60,0.3)" stroke="#fb923c" stroke-width="1.5"/>
+        <text x="980" y="92" fill="white" font-size="12" font-weight="700" text-anchor="middle">Redis</text>
+        <text x="980" y="110" fill="#94a3b8" font-size="9" text-anchor="middle">Upstash</text>
+        <text x="980" y="124" fill="#fb923c" font-size="8" text-anchor="middle">Heartbeat / Cache</text>
+
+        <!-- Telegram -->
+        <rect x="1065" y="70" width="130" height="70" rx="8" fill="rgba(136,19,55,0.4)" stroke="#fb7185" stroke-width="1.5"/>
+        <text x="1130" y="92" fill="white" font-size="12" font-weight="700" text-anchor="middle">Telegram</text>
+        <text x="1130" y="110" fill="#94a3b8" font-size="9" text-anchor="middle">Bot API</text>
+        <text x="1130" y="124" fill="#fb7185" font-size="8" text-anchor="middle">Notifications 📡</text>
+
+        <!-- Cloudflare Workers -->
+        <rect x="580" y="155" width="150" height="40" rx="6" fill="rgba(120,53,15,0.25)" stroke="#fbbf24" stroke-width="1.2"/>
+        <text x="655" y="172" fill="white" font-size="10" font-weight="600" text-anchor="middle">Cloudflare Workers</text>
+        <text x="655" y="186" fill="#94a3b8" font-size="8" text-anchor="middle">worker.js (Webhook)</text>
+
+        <!-- TradingView -->
+        <rect x="745" y="155" width="150" height="40" rx="6" fill="rgba(136,19,55,0.3)" stroke="#fb7185" stroke-width="1.2"/>
+        <text x="820" y="172" fill="white" font-size="10" font-weight="600" text-anchor="middle">TradingView</text>
+        <text x="820" y="186" fill="#94a3b8" font-size="8" text-anchor="middle">Webhook Signals</text>
+
+        <!-- Dashboard -->
+        <rect x="910" y="155" width="140" height="40" rx="6" fill="rgba(8,51,68,0.4)" stroke="#22d3ee" stroke-width="1.2"/>
+        <text x="980" y="172" fill="white" font-size="10" font-weight="600" text-anchor="middle">Dashboard</text>
+        <text x="980" y="186" fill="#94a3b8" font-size="8" text-anchor="middle">App.jsx + main.jsx</text>
+
+        <!-- Bot → External Services arrows -->
+        <line x1="265" y1="390" x2="580" y2="105" stroke="#fbbf24" stroke-width="1.5" marker-end="url(#arrow)"/>
+        <text x="420" y="140" fill="#fbbf24" font-size="8">place_order / get_ohlcv</text>
+
+        <line x1="475" y1="390" x2="820" y2="105" stroke="#a78bfa" stroke-width="1.5" marker-end="url(#arrow)"/>
+        <text x="645" y="140" fill="#a78bfa" font-size="8">save_trade_state</text>
+
+        <line x1="475" y1="390" x2="980" y2="105" stroke="#fb923c" stroke-width="1.5" marker-end="url(#arrow)"/>
+        <text x="725" y="140" fill="#fb923c" font-size="8">update_heartbeat</text>
+
+        <line x1="105" y1="390" x2="1130" y2="105" stroke="#fb7185" stroke-width="1.5" marker-end="url(#arrow)"/>
+        <text x="562" y="140" fill="#fb7185" font-size="8">send_startup / send_error</text>
+
+        <!-- TradingView → worker.js → bot webhook -->
+        <line x1="820" y1="195" x2="655" y2="195" stroke="#fb7185" stroke-width="1.2" marker-end="url(#arrow)" stroke-dasharray="4,3"/>
+        <text x="737" y="191" fill="#fb7185" font-size="7">POST signal</text>
+
+        <line x1="655" y1="195" x2="225" y2="390" stroke="#fb7185" stroke-width="1.2" marker-end="url(#arrow)" stroke-dasharray="4,3"/>
+        <text x="420" y="285" fill="#fb7185" font-size="7">handle_webhook_signal()</text>
+
+        <!-- Dashboard → Supabase -->
+        <line x1="980" y1="195" x2="820" y2="195" stroke="#22d3ee" stroke-width="1.2" marker-end="url(#arrow-cyan)" stroke-dasharray="4,3"/>
+        <text x="900" y="191" fill="#22d3ee" font-size="7">读写 trades</text>
+
+        <!-- ═══════════════════════════════════════════
+             المنطقة: نتائج الاختبارات (Test Results)
+             ═══════════════════════════════════════════ -->
+        <rect x="560" y="220" width="720" height="80" rx="8" fill="rgba(52,211,153,0.05)" stroke="#34d399" stroke-width="1" stroke-dasharray="5,3"/>
+        <text x="572" y="238" fill="#34d399" font-size="10" font-weight="600">🧪 نتائج الاختبارات المحلية (pytest — 15 passed, 4 skipped)</text>
+
+        <!-- Test file boxes in a row -->
+        <rect x="580" y="250" width="165" height="40" rx="5" fill="rgba(136,19,55,0.3)" stroke="#fb7185" stroke-width="1.2"/>
+        <text x="662" y="266" fill="white" font-size="9" font-weight="600" text-anchor="middle">test_connections.py</text>
+        <text x="662" y="280" fill="#34d399" font-size="8" text-anchor="middle">✅ 5/5 pass</text>
+
+        <rect x="750" y="250" width="165" height="40" rx="5" fill="rgba(136,19,55,0.3)" stroke="#fb7185" stroke-width="1.2"/>
+        <text x="832" y="266" fill="white" font-size="9" font-weight="600" text-anchor="middle">test_exchange_config.py</text>
+        <text x="832" y="280" fill="#34d399" font-size="8" text-anchor="middle">✅ 6/6 pass</text>
+
+        <rect x="920" y="250" width="165" height="40" rx="5" fill="rgba(136,19,55,0.3)" stroke="#fb7185" stroke-width="1.2"/>
+        <text x="1002" y="266" fill="white" font-size="9" font-weight="600" text-anchor="middle">test_full_system.py</text>
+        <text x="1002" y="280" fill="#34d399" font-size="8" text-anchor="middle">✅ 7/7 pass</text>
+
+        <rect x="1090" y="250" width="170" height="40" rx="5" fill="rgba(136,19,55,0.3)" stroke="#fb7185" stroke-width="1.2"/>
+        <text x="1175" y="266" fill="white" font-size="9" font-weight="600" text-anchor="middle">test_real_data.py</text>
+        <text x="1175" y="280" fill="#fbbf24" font-size="8" text-anchor="middle">⏭ 4 skip (no API keys)</text>
+
+        <!-- ═══════════════════════════════════════════
+             المنطقة: الإصلاحات المطبيقة (Fixes Applied)
+             ═══════════════════════════════════════════ -->
+        <rect x="560" y="315" width="720" height="170" rx="8" fill="rgba(52,211,153,0.03)" stroke="#34d399" stroke-width="1" stroke-dasharray="4,2"/>
+        <text x="572" y="333" fill="#34d399" font-size="10" font-weight="600">🔧 الإصلاحات المطبيقة (Fixes — commits e9a806d + 9b477b4)</text>
+
+        <!-- Fix items as a grid -->
+        <rect x="575" y="345" width="170" height="55" rx="5" fill="rgba(52,211,153,0.1)" stroke="#34d399" stroke-width="1"/>
+        <text x="660" y="360" fill="#34d399" font-size="9" font-weight="600">📌 NameError: dataclass</text>
+        <text x="660" y="376" fill="#94a3b8" font-size="8">bot/config.py — استيراد dataclass</text>
+        <text x="660" y="390" fill="#34d399" font-size="8">✅ieder 해결 완료</text>
+
+        <rect x="750" y="345" width="170" height="55" rx="5" fill="rgba(52,211,153,0.1)" stroke="#34d399" stroke-width="1"/>
+        <text x="835" y="360" fill="#34d399" font-size="9" font-weight="600">📌 TradingMode import</text>
+        <text x="835" y="376" fill="#94a3b8" font-size="8">bot/signals/__init__.py</text>
+        <text x="835" y="390" fill="#34d399" font-size="8">✅ Removed from __all__</text>
+
+        <rect x="925" y="345" width="170" height="55" rx="5" fill="rgba(52,211,153,0.1)" stroke="#34d399" stroke-width="1"/>
+        <text x="1010" y="360" fill="#34d399" font-size="9" font-weight="600">📌 enabled_exchanges()</text>
+        <text x="1010" y="376" fill="#94a3b8" font-size="8">ExchangeConfig method missing</text>
+        <text x="1010" y="390" fill="#34d399" font-size="8">✅ Added (CI error fix)</text>
+
+        <rect x="1100" y="345" width="170" height="55" rx="5" fill="rgba(52,211,153,0.1)" stroke="#34d399" stroke-width="1"/>
+        <text x="1185" y="360" fill="#34d399" font-size="9" font-weight="600">📌 _env_bool(None)</text>
+        <text x="1185" y="376" fill="#94a3b8" font-size="8">None → "" treated as falsy</text>
+        <text x="1185" y="390" fill="#34d399" font-size="8">✅ Fixed: None→default</text>
+
+        <rect x="575" y="405" width="170" height="55" rx="5" fill="rgba(52,211,153,0.1)" stroke="#34d399" stroke-width="1"/>
+        <text x="660" y="420" fill="#34d399" font-size="9" font-weight="600">📌 test files rewrite</text>
+        <text x="660" y="436" fill="#94a3b8" font-size="8">4 test files incompatible</text>
+        <text x="660" y="450" fill="#34d399" font-size="8">✅ All rewritten & passing</text>
+
+        <rect x="750" y="405" width="170" height="55" rx="5" fill="rgba(52,211,153,0.1)" stroke="#34d399" stroke-width="1"/>
+        <text x="835" y="420" fill="#34d399" font-size="9" font-weight="600">📌 __main__ block</text>
+        <text x="835" y="436" fill="#94a3b8" font-size="8">bot/main.py — no entry point</text>
+        <text x="835" y="450" fill="#34d399" font-size="8">✅ Added if __name__</text>
+
+        <rect x="925" y="405" width="170" height="55" rx="5" fill="rgba(52,211,153,0.1)" stroke="#34d399" stroke-width="1"/>
+        <text x="1010" y="420" fill="#34d399" font-size="9" font-weight="600">📌 workflow update</text>
+        <text x="1010" y="436" fill="#94a3b8" font-size="8">binance.yml — test filter</text>
+        <text x="1010" y="450" fill="#34d399" font-size="8">✅ Run all, skip=keys</text>
+
+        <rect x="1100" y="405" width="170" height="55" rx="5" fill="rgba(52,211,153,0.1)" stroke="#34d399" stroke-width="1"/>
+        <text x="1185" y="420" fill="#34d399" font-size="9" font-weight="600">📌 Primary Exchange</text>
+        <text x="1185" y="436" fill="#94a3b8" font-size="8">dataclass field vs method</text>
+        <text x="1185" y="450" fill="#34d399" font-size="8">✅ _primary_exchange</text>
+
+        <!-- ═══════════════════════════════════════════
+             المنطقة: حالة الرفع (Push Status)
+             ═══════════════════════════════════════════ -->
+        <rect x="560" y="500" width="720" height="90" rx="8" fill="rgba(52,211,153,0.05)" stroke="#34d399" stroke-width="1" stroke-dasharray="5,3"/>
+        <text x="572" y="518" fill="#34d399" font-size="10" font-weight="600">🚀 حالة الرفع إلى GitHub (Push Status)</text>
+        <text x="572" y="534" fill="#94a3b8" font-size="8">git status — main branch • ahead of origin/main</text>
+
+        <!-- Push status items -->
+        <rect x="575" y="545" width="225" height="28" rx="4" fill="rgba(52,211,153,0.15)" stroke="#34d399" stroke-width="1"/>
+        <text x="687" y="559" fill="#34d399" font-size="9" font-weight="600" text-anchor="middle">✅ commit e9a806d: pushed</text>
+
+        <rect x="805" y="545" width="225" height="28" rx="4" fill="rgba(52,211,153,0.15)" stroke="#34d399" stroke-width="1"/>
+        <text x="917" y="559" fill="#34d399" font-size="9" font-weight="600" text-anchor="middle">✅ commit 9b477b4: pushed</text>
+
+        <rect x="1035" y="545" width="230" height="28" rx="4" fill="rgba(251,191,36,0.15)" stroke="#fbbf24" stroke-width="1"/>
+        <text x="1150" y="559" fill="#fbbf24" font-size="9" font-weight="600" text-anchor="middle">📝 3 files modified (unstaged)</text>
+
+        <rect x="575" y="578" width="460" height="30" rx="4" fill="rgba(251,146,60,0.1)" stroke="#fb923c" stroke-width="1"/>
+        <text x="805" y="592" fill="#fb923c" font-size="8" font-weight="600" text-anchor="middle">modified: bot/main.py · test_connections.py · tests/test_exchange_config.py</text>
+
+        <rect x="1040" y="578" width="155" height="30" rx="4" fill="rgba(136,19,55,0.2)" stroke="#fb7185" stroke-width="1"/>
+        <text x="1117" y="592" fill="#fb7185" font-size="8" font-weight="600" text-anchor="middle">+ apex-trader-architecture.html</text>
+
+        <!-- ═══════════════════════════════════════════
+             LEGEND
+             ═══════════════════════════════════════════ -->
+        <text x="560" y="608" fill="white" font-size="10" font-weight="600">تعريف الألوان (Legend)</text>
+
+        <rect x="560" y="620" width="16" height="10" rx="2" fill="rgba(6,78,59,0.4)" stroke="#34d399" stroke-width="1"/>
+        <text x="582" y="628" fill="#94a3b8" font-size="8">Backend Module</text>
+
+        <rect x="560" y="636" width="16" height="10" rx="2" fill="rgba(8,51,68,0.4)" stroke="#22d3ee" stroke-width="1"/>
+        <text x="582" y="644" fill="#94a3b8" font-size="8">Data / Strategy</text>
+
+        <rect x="560" y="652" width="16" height="10" rx="2" fill="rgba(76,29,149,0.4)" stroke="#a78bfa" stroke-width="1"/>
+        <text x="582" y="660" fill="#94a3b8" font-size="8">Config / DB</text>
+
+        <rect x="560" y="668" width="16" height="10" rx="2" fill="rgba(251,146,60,0.3)" stroke="#fb923c" stroke-width="1"/>
+        <text x="582" y="676" fill="#94a3b8" font-size="8">Notifications</text>
+
+        <rect x="560" y="684" width="16" height="10" rx="2" fill="rgba(136,19,55,0.3)" stroke="#fb7185" stroke-width="1"/>
+        <text x="582" y="692" fill="#94a3b8" font-size="8">Tests / Security</text>
+
+        <rect x="560" y="700" width="16" height="10" rx="2" fill="rgba(120,53,15,0.3)" stroke="#fbbf24" stroke-width="1"/>
+        <text x="582" y="708" fill="#94a3b8" font-size="8">Cloud / CI</text>
+
+        <line x1="560" y1="720" x2="576" y2="720" stroke="#fbbf24" stroke-width="1" stroke-dasharray="3,2"/>
+        <text x="582" y="723" fill="#94a3b8" font-size="8">CI/CD Pipeline</text>
+
+        <line x1="560" y1="732" x2="576" y2="732" stroke="#34d399" stroke-width="1" stroke-dasharray="3,2"/>
+        <text x="582" y="735" fill="#94a3b8" font-size="8">Internal Dependency</text>
+
+        <line x1="560" y1="744" x2="576" y2="744" stroke="#fb7185" stroke-width="1" stroke-dasharray="3,2"/>
+        <text x="582" y="747" fill="#94a3b8" font-size="8">Webhook / Auth</text>
+
+      </svg>
+    </div>
+
+    <!-- Info Cards -->
+    <div class="cards" dir="rtl">
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot emerald"></div>
+          <h3>المكونات الداخلية (bot/)</h3>
+        </div>
+        <ul>
+          <li>• 16 ملف Python في bot/</li>
+          <li>• config.py: ExchangeConfig + 4 classes</li>
+          <li>• main.py: ApexTraderBot + __main__</li>
+          <li>• signals/: engine + indicators + filters</li>
+          <li>• core/: exchange + risk + fee + position</li>
+          <li>• data/: market_data + state_manager</li>
+          <li>• strategies/: explosion + scalping</li>
+          <li>• notifications/: telegram_notifier</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot cyan"></div>
+          <h3>مخرجات الاختبارات (pytest)</h3>
+        </div>
+        <ul>
+          <li>• 19 اختبارًا مُجمَّعة</li>
+          <li>• 15 نجحوا (✅)</li>
+          <li>• 4 تخطوا (⏭ — بدون مفاتيح Binance)</li>
+          <li>• 0 فشل (❌)</li>
+          <li>• test_connections.py: 5/5 ✅</li>
+          <li>• test_exchange_config.py: 6/6 ✅</li>
+          <li>• test_full_system.py: 7/7 ✅</li>
+          <li>• test_real_data.py: 4/4 ⏭</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot amber"></div>
+          <h3>GitHub Actions Workflow</h3>
+        </div>
+        <ul>
+          <li>• cron: كل 15 دقيقة</li>
+          <li>• workflow_dispatch: يدوي</li>
+          <li>• Python 3.11 على ubuntu-24.04</li>
+          <li>• pytest tests/ -x -q</li>
+          <li>• compileall -q bot tests</li>
+          <li>• python -m bot.main (conditional)</li>
+          <li>• upload-artifact logs/ عند الفشل</li>
+          <li>• binance.yml — جاهز للعمل</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot rose"></div>
+          <h3>الإصلاحات المطبقحة (Commits)</h3>
+        </div>
+        <ul>
+          <li>• e9a806d: dataclass + TradingMode</li>
+          <li>• 9b477b4: enabled_exchanges()</li>
+          <li>• _env_bool(None) → default 값</li>
+          <li>• primary_exchange() → _primary_exchange</li>
+          <li>• 4 test files → rewritten</li>
+          <li>• bot/main.py → __main__ block</li>
+          <li>• binance.yml → workflow updated</li>
+          <li>• Total: 7 fixes across 6 files</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot violet"></div>
+          <h3>الخدمات الخارجية المتصلة</h3>
+        </div>
+        <ul>
+          <li>• Binance Futures (ccxt) — trading</li>
+          <li>• Supabase (PostgreSQL) — state/trades</li>
+          <li>• Upstash Redis — heartbeat/cache</li>
+          <li>• Telegram Bot API — notifications</li>
+          <li>• Cloudflare Workers — webhook intake</li>
+          <li>• TradingView — webhook signals</li>
+          <li>• React Dashboard — visualization</li>
+          <li>• كلها متصلة عبر bot/main.py</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot emerald"></div>
+          <h3>التكامل المترابط (Interconnections)</h3>
+        </div>
+        <ul>
+          <li>• config.py ← كل الموديولات (Config() singleton)</li>
+          <li>• main.py → market_data → Binance API</li>
+          <li>• main.py → signal_engine → indicators</li>
+          <li>• signal_engine → filters → risk_manager</li>
+          <li>• risk_manager → exchange (place_order)</li>
+          <li>• exchange → Binance (ccxt) ←→ Supabase</li>
+          <li>• position_manager → Telegram (updates)</li>
+          <li>• state_manager → Redis (heartbeat)</li>
+        </ul>
+      </div>
+    </div>
+
+    <p class="footer">
+      تم التعديل最后一次 في 2026-09-25 | APEX-TRADER • palc88-stack | Python 3.11 • ccxt • pytest • GitHub Actions
+    </p>
+  </div>
+</body>
+</html>
