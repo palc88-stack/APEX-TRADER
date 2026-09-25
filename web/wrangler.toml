@@ -1,5 +1,6 @@
 name = "apex-trader"
-compatibility_date = "2024-09-24"
+compatibility_date = "2024-09-25"
+compatibility_flags = ["nodejs_compat"]
 
 [assets]
 directory = "./dist"
