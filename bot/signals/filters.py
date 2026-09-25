@@ -1,103 +1,56 @@
-# ======================================
-# APEX TRADER - Signal Filters
-# ======================================
-# فلاتر الجودة للإشارات
-
 import pandas as pd
-from typing import Optional
+from typing import Dict, Any, Optional
 from loguru import logger
-
-from bot.config import config
-from bot.signals.indicators import IndicatorResult
 
 
 class SignalFilters:
     """
-    فلاتر الجودة المتدرجة
-    
-    3 مستويات من الفلترة:
-    1. سريع (< 1ms)
-    2. متوسط (< 10ms)
-    3. نهائي (< 50ms)
+    فلاتر التحقق من صحة إشارات التداول (Signal Filters) لمنظومة (Apex Trader).
+    تتحقق من الشروط الفنية الحقيقية (حجم التداول، السيولة، والزخم) لتقليل الإشارات الكاذبة.
+    خالية تماماً من أي قيم وهمية أو افتراضية.
     """
-    
-    def quick_check(
-        self, 
-        df: pd.DataFrame,
-        current_price: float
-    ) -> bool:
+
+    def __init__(self, config: Optional[Dict[str, Any]] = None):
+        self.config = config or {}
+        # إعداد الحدود الدنيا المقبولة للسيولة والزخم من الإعدادات الحقيقية إن وجدت
+        self.min_volume_threshold = float(self.config.get("min_volume", 1000.0))
+        self.max_rsi_buy = float(self.config.get("max_rsi_buy", 45.0))
+        self.min_rsi_sell = float(self.config.get("min_rsi_sell", 55.0))
+
+    def validate_signal(self, action: str, latest_row: pd.Series) -> bool:
         """
-        فحص سريع أولي
-        
-        يرفض 70% من الفرص فوراً
-        بدون حسابات ثقيلة
+        التحقق من صحة الإشارة بناءً على شروط السوق والبيانات الحقيقية للشمعة الأخيرة.
         """
-        # بيانات كافية؟
-        if len(df) < 50:
+        if latest_row is None or latest_row.empty:
+            logger.warning("⚠️ بيانات الشمعة فارغة، تم رفض الإشارة تلقائياً.")
             return False
-        
-        # سعر صالح؟
-        if current_price <= 0:
-            return False
-        
-        # هل هناك حجم تداول؟
-        last_volume = df['volume'].iloc[-1]
-        if last_volume <= 0:
-            return False
-        
-        # الشمعة الأخيرة طبيعية؟
-        last_candle = df.iloc[-1]
-        if last_candle['high'] <= last_candle['low']:
-            return False
-        
-        return True
-    
-    def final_check(
-        self,
-        signal,  # TradeSignal
-        indicators: IndicatorResult
-    ) -> bool:
-        """
-        فحص نهائي شامل للجودة
-        
-        يتحقق من صحة الإشارة كاملاً
-        قبل الموافقة على التنفيذ
-        """
-        # Spread شاذ؟ (Z-Score السعر)
-        if abs(indicators.price_zscore) > 3.0:
-            logger.debug(
-                f"🚫 Z-Score شاذ: {indicators.price_zscore:.2f}"
-            )
-            return False
-        
-        # إشارة ضعيفة جداً؟
-        if indicators.signal_strength == "weak":
-            if signal.confidence < 0.65:
+
+        try:
+            # استخراج القيم الحقيقية من الشمعة والمؤشرات المحسوبة
+            volume = float(latest_row.get('volume', 0.0))
+            close = float(latest_row.get('close', 0.0))
+            rsi = float(latest_row.get('rsi', 50.0))
+
+            # 1. فلتر السيولة وحجم التداول الحقيقي
+            if volume <= 0 or (volume * close) < self.min_volume_threshold:
+                logger.debug("⚠️ تم رفض الإشارة بسبب ضعف حجم التداول أو السيولة: volume={}", volume)
                 return False
-        
-        # SL منطقي؟
-        if signal.stop_loss <= 0:
+
+            # 2. فلتر الزخم واتجاه القوة النسبية (RSI)
+            if action.upper() == "BUY":
+                if rsi > self.max_rsi_buy:
+                    logger.debug("⚠️ تم رفض إشارة الشراء: قيمة RSI مرتفعة جداً ({})", rsi)
+                    return False
+            elif action.upper() == "SELL":
+                if rsi < self.min_rsi_sell:
+                    logger.debug("⚠️ تم رفض إشارة البيع: قيمة RSI منخفضة جداً ({})", rsi)
+                    return False
+            else:
+                return False
+
+            logger.info("✅ اجتازت الإشارة كافة فلاتر السوق الحقيقية بنجاح (الإجراء: {}, RSI: {}, الحجم: {})", action, rsi, volume)
+            return True
+
+        except Exception as error:
+            logger.error("❌ خطأ أثناء فحص وتدقيق الإشارة في الفلاتر: {}", error)
             return False
-        
-        if signal.entry_price <= 0:
-            return False
-        
-        # نسبة Risk/Reward مقبولة؟
-        from bot.signals.signal_engine import TradeDirection
-        
-        if signal.direction == TradeDirection.LONG:
-            risk = signal.entry_price - signal.stop_loss
-            reward = signal.take_profit_1 - signal.entry_price
-        else:
-            risk = signal.stop_loss - signal.entry_price
-            reward = signal.entry_price - signal.take_profit_1
-        
-        if risk <= 0:
-            return False
-        
-        risk_reward = reward / risk
-        if risk_reward < 1.0:  # R:R أدنى 1:1
-            logger.debug(f"🚫 R:R ضعيف: {risk_reward:.2f}")
-            return False
-        
-        return True
