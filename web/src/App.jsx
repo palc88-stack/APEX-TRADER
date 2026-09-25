@@ -173,7 +173,7 @@ function Dashboard() {
 
     const [statusResult, tradesResult] = await Promise.all([
       supabase
-        .from("bot_runtime_status")
+        .from("bot_state")
         .select("*")
         .eq("id", 1)
         .maybeSingle(),
@@ -219,7 +219,7 @@ function Dashboard() {
         {
           event: "*",
           schema: "public",
-          table: "bot_runtime_status",
+          table: "bot_state",
         },
         loadData
       )
@@ -277,8 +277,8 @@ function Dashboard() {
     return <main className="page loading">جارٍ تحميل لوحة APEX...</main>;
   }
 
-  const heartbeatTimestamp = status?.heartbeat_at
-    ? new Date(status.heartbeat_at).getTime()
+  const heartbeatTimestamp = status?.last_run_at
+    ? new Date(status.last_run_at).getTime()
     : null;
 
   const heartbeatAgeMinutes =

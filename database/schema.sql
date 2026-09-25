@@ -21,6 +21,11 @@ CREATE TABLE IF NOT EXISTS bot_state (
     error_count INTEGER DEFAULT 0,
     last_error TEXT,
 
+    -- ✅ إضافة: الخسائر والربح اليومي
+    daily_loss_limit_usd DECIMAL(10, 2) DEFAULT 100.00,
+    daily_loss_used_usd DECIMAL(10, 2) DEFAULT 0.00,
+    daily_realized_pnl DECIMAL(10, 2) DEFAULT 0.00,
+
     -- التوقيت
     last_run_at TIMESTAMPTZ,
     updated_at TIMESTAMPTZ DEFAULT NOW(),
@@ -43,6 +48,12 @@ ALTER TABLE bot_state
     ADD COLUMN IF NOT EXISTS error_count INTEGER DEFAULT 0;
 ALTER TABLE bot_state
     ADD COLUMN IF NOT EXISTS last_error TEXT;
+ALTER TABLE bot_state
+    ADD COLUMN IF NOT EXISTS daily_loss_limit_usd DECIMAL(10, 2) DEFAULT 100.00;
+ALTER TABLE bot_state
+    ADD COLUMN IF NOT EXISTS daily_loss_used_usd DECIMAL(10, 2) DEFAULT 0.00;
+ALTER TABLE bot_state
+    ADD COLUMN IF NOT EXISTS daily_realized_pnl DECIMAL(10, 2) DEFAULT 0.00;
 
 -- ===== باقي الجداول بدون تغيير =====
 -- (trades, daily_performance, system_logs - كما هي)

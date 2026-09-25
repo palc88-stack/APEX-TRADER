@@ -65,11 +65,43 @@ class StateManager:
             self.client.table("bot_state").update({
                 "is_running": True,
                 "last_run_at": now_utc,
-                "updated_at": now_utc
+                "updated_at": now_utc,
             }).eq("id", 1).execute()
             logger.debug("💓 Heartbeat: {}", now_utc)
         except Exception as e:
             logger.error("❌ update_heartbeat: {}", e)
+
+    async def update_bot_status(
+        self,
+        balance: Optional[float] = None,
+        daily_loss_used: Optional[float] = None,
+        daily_realized_pnl: Optional[float] = None,
+        daily_loss_limit: Optional[float] = None,
+    ) -> None:
+        """
+        تحديث الحالة المالية للبوت — يُستخدم من main.py.
+        """
+        if not self.client:
+            return
+        try:
+            updates: Dict[str, Any] = {
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }
+            if balance is not None:
+                updates["current_balance"] = round(balance, 2)
+            if daily_loss_used is not None:
+                updates["daily_loss_used_usd"] = round(daily_loss_used, 2)
+            if daily_realized_pnl is not None:
+                updates["daily_realized_pnl"] = round(daily_realized_pnl, 2)
+            if daily_loss_limit is not None:
+                updates["daily_loss_limit_usd"] = round(daily_loss_limit, 2)
+            self.client.table("bot_state").update(updates).eq("id", 1).execute()
+            logger.debug("📊 Bot status updated: balance={}, loss_used={}, pnl={}",
+                         updates.get("current_balance"),
+                         updates.get("daily_loss_used_usd"),
+                         updates.get("daily_realized_pnl"))
+        except Exception as e:
+            logger.error("❌ update_bot_status: {}", e)
 
     async def mark_bot_stopped(self) -> None:
         """تسجيل إيقاف البوت في قاعدة البيانات."""

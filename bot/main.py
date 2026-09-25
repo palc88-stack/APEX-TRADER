@@ -45,6 +45,9 @@ class ApexTraderBot:
         self.supabase_client: Client = self._init_supabase()
         self.state_manager = StateManager(self.config)
         self.telegram = TelegramNotifier()
+        # ✅ تتبع الحالة المالية اليومية
+        self._daily_loss_used = 0.0
+        self._daily_realized_pnl = 0.0
 
     def _init_supabase(self) -> Client:
         try:
@@ -65,6 +68,21 @@ class ApexTraderBot:
         while True:
             try:
                 await self.state_manager.update_heartbeat()
+                # ✅ تحديث الحالة المالية كل دورة
+                try:
+                    balance = await self.exchange.get_balance()
+                    self._daily_loss_limit = (
+                        float(self.config.risk.max_daily_loss_pct or 0.02)
+                        * balance
+                    )
+                    await self.state_manager.update_bot_status(
+                        balance=balance,
+                        daily_loss_used=self._daily_loss_used,
+                        daily_realized_pnl=self._daily_realized_pnl,
+                        daily_loss_limit=self._daily_loss_limit,
+                    )
+                except Exception as e:
+                    logger.debug(f"⚠️ لا يمكن جلب الرصيد للـ heartbeat: {e}")
             except Exception as e:
                 logger.error(f"⚠️ فشل Heartbeat: {e}")
             await asyncio.sleep(interval_seconds)
@@ -73,6 +91,16 @@ class ApexTraderBot:
         logger.info("Initializing ApexTrader...")
         await self.state_manager.load_initial_state()
         balance = await self.exchange.get_balance()
+        self._daily_loss_limit = (
+            float(self.config.risk.max_daily_loss_pct or 0.02)
+            * balance
+        )
+        await self.state_manager.update_bot_status(
+            balance=balance,
+            daily_loss_used=self._daily_loss_used,
+            daily_realized_pnl=self._daily_realized_pnl,
+            daily_loss_limit=self._daily_loss_limit,
+        )
         await self.telegram.send_startup(
             balance=balance,
             mode=str(self.config.active_mode)
