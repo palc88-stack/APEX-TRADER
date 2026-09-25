@@ -8,7 +8,6 @@ from bot.signals.signal_engine import (
     SignalEngine,
     TradeSignal,
     TradeDirection,
-    TradingMode,
 )
 
 from bot.strategies.explosion import (
@@ -25,7 +24,6 @@ __all__ = [
     "SignalEngine",
     "TradeSignal",
     "TradeDirection",
-    "TradingMode",
     "ExplosionDetector",
     "ExplosionSignal",
     "ScalpingStrategy",
