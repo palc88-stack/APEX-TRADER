@@ -32,7 +32,16 @@ class StateManager:
         if supabase_url and supabase_key:
             try:
                 self.client = create_client(supabase_url, supabase_key)
-                logger.info("✅ StateManager: Supabase متصل")
+                # ✅ اختبار اتصال حقيقي فوراً — لا نكتفي بإنشاء client
+                try:
+                    test_res = self.client.table("bot_state").select("*").limit(1).execute()
+                    logger.info("✅ StateManager: Supabase متصل (جرب اتصال ناجح)")
+                except Exception as conn_err:
+                    logger.warning(
+                        "⚠️ StateManager: client أنشئ لكن الربط الفعلي فشل: {} — "
+                        "قد تفشل عمليات الكتابة لاحقاً",
+                        conn_err
+                    )
             except Exception as e:
                 logger.error("❌ Supabase connection failed: {}", e)
         else:
@@ -69,7 +78,7 @@ class StateManager:
                 "last_run_at": now_utc,
                 "updated_at": now_utc,
             }).execute()
-            logger.debug("💓 Heartbeat: {}", now_utc)
+            logger.info("💓 Heartbeat مُكتوبة: {} | is_running=true", now_utc)
         except Exception as e:
             logger.error("❌ update_heartbeat: {}", e)
 
@@ -100,10 +109,12 @@ class StateManager:
                 updates["daily_loss_limit_usd"] = round(daily_loss_limit, 2)
             # ✅ استخدام upsert بدلاً من update — يضمن وجود الصف
             self.client.table("bot_state").upsert(updates).execute()
-            logger.debug("📊 Bot status updated: balance={}, loss_used={}, pnl={}",
-                         updates.get("current_balance"),
-                         updates.get("daily_loss_used_usd"),
-                         updates.get("daily_realized_pnl"))
+            logger.info(
+                "📊 Bot status مُحدَّث: balance={}, loss_used={}, pnl={}",
+                updates.get("current_balance"),
+                updates.get("daily_loss_used_usd"),
+                updates.get("daily_realized_pnl")
+            )
         except Exception as e:
             logger.error("❌ update_bot_status: {}", e)
 
