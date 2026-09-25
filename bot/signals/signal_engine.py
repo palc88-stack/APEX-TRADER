@@ -8,6 +8,12 @@ from bot.signals.filters import SignalFilters
 
 
 class TradeDirection(str, Enum):
+    """
+    توحيد اتجاهات التداول لتغطية كافة المراجع البرمجية في المنظومة 
+    (سواء القادمة من مدير المراكز مثل LONG/SHORT أو استراتيجيات السكالبينج مثل BUY/SELL/HOLD).
+    """
+    LONG = "LONG"
+    SHORT = "SHORT"
     BUY = "BUY"
     SELL = "SELL"
     HOLD = "HOLD"
@@ -91,14 +97,14 @@ class SignalEngine:
 
             if is_trend_bullish and rsi < 40:
                 if self.signal_filters.validate_signal("BUY", latest_row):
-                    result["action"] = TradeDirection.BUY
+                    result["action"] = TradeDirection.LONG
                     result["strategy"] = "TREND_BOUNCE"
                     result["confidence"] = 0.85
                     result["reason"] = "Bullish trend pullback with RSI oversold recovery."
 
             elif is_trend_bearish and rsi > 60:
                 if self.signal_filters.validate_signal("SELL", latest_row):
-                    result["action"] = TradeDirection.SELL
+                    result["action"] = TradeDirection.SHORT
                     result["strategy"] = "TREND_PULLBACK"
                     result["confidence"] = 0.85
                     result["reason"] = "Bearish trend rally with RSI overbought rejection."
