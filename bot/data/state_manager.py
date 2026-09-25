@@ -1,10 +1,3 @@
-# ======================================
-# APEX TRADER - State Manager (Complete)
-# ======================================
-# إدارة حالة البوت الكاملة
-# Supabase + Upstash Redis
-# بيانات حقيقية محفوظة بأمان
-
 import json
 import redis as redis_client
 from typing import Optional, List
@@ -19,14 +12,10 @@ from bot.signals.signal_engine import TradeDirection
 
 class StateManager:
     """
-    مدير الحالة المركزي
-
-    يحفظ ويسترجع البيانات من:
-    - Upstash Redis: حالة سريعة لحظية
-    - Supabase PostgreSQL: سجل دائم
+    مدير الحالة المركزي لبوت التداول APEX TRADER.
+    يقوم بإدارة وتحفيظ البيانات بين Upstash Redis و Supabase PostgreSQL.
     """
 
-    # مفاتيح Redis
     KEY_BOT_STATE = "apex:bot:state"
     KEY_DAILY_STATS = "apex:daily:stats"
     KEY_OPEN_POSITIONS = "apex:positions:open"
@@ -39,25 +28,19 @@ class StateManager:
         self._init_connections()
 
     def _init_connections(self) -> None:
-        """
-        تهيئة اتصالات قواعد البيانات
-        """
+        """تهيئة واختبار اتصالات قواعد البيانات."""
         # === Supabase ===
         try:
-            if (config.database.supabase_url and
-                    config.database.supabase_key):
+            if config.database.supabase_url and config.database.supabase_key:
                 self._supabase = create_client(
                     config.database.supabase_url,
                     config.database.supabase_key
                 )
-                # اختبار الاتصال
-                self._supabase.table("bot_state").select(
-                    "id"
-                ).limit(1).execute()
+                self._supabase.table("bot_state").select("id").limit(1).execute()
                 self._db_available = True
-                logger.info("✅ Supabase متصل ويعمل")
+                logger.info("✅ Supabase متصل ويعمل بنجاح")
             else:
-                logger.warning("⚠️ Supabase: مفاتيح مفقودة")
+                logger.warning("⚠️ Supabase: البيانات والمفاتيح غير مكتملة في الإعدادات")
         except Exception as e:
             logger.warning(f"⚠️ Supabase غير متاح: {e}")
             self._db_available = False
@@ -72,210 +55,126 @@ class StateManager:
                     socket_timeout=5,
                     retry_on_timeout=True
                 )
-                # اختبار الاتصال
                 self._redis.ping()
                 self._redis_available = True
-                logger.info("✅ Redis متصل ويعمل")
+                logger.info("✅ Redis متصل ويعمل بنجاح")
             else:
-                logger.warning("⚠️ Redis: URL مفقود")
+                logger.warning("⚠️ Redis: رابط الاتصال مفقود")
         except Exception as e:
             logger.warning(f"⚠️ Redis غير متاح: {e}")
             self._redis_available = False
 
     # ==========================================
-    # Bot State Management
+    # 1. إدارة حالة البوت العامة (Bot State)
     # ==========================================
 
     async def save_state(self, state: dict) -> bool:
-        """
-        حفظ حالة البوت في Redis و Supabase
-        """
-        state['saved_at'] = datetime.now(
-            timezone.utc
-        ).isoformat()
-
-        saved_redis = self._save_to_redis(
-            self.KEY_BOT_STATE,
-            state,
-            ttl=86400  # 24 ساعة
-        )
-
+        """حفظ حالة البوت العامة في Redis و Supabase."""
+        state['saved_at'] = datetime.now(timezone.utc).isoformat()
+        saved_redis = self._save_to_redis(self.KEY_BOT_STATE, state, ttl=86400)
         saved_db = await self._save_bot_state_to_db(state)
 
         if not saved_redis and not saved_db:
-            logger.error("❌ فشل حفظ الحالة في كلا المكانين!")
+            logger.error("❌ فشل حفظ حالة البوت في كلا المصدرين!")
             return False
 
         return True
 
     async def load_state(self) -> Optional[dict]:
-        """
-        تحميل حالة البوت
-        Redis أولاً (أسرع) ثم Supabase
-        """
-        # محاولة Redis أولاً
+        """تحميل حالة البوت (محاولة القراءة من Redis أولاً ثم Supabase)."""
         if self._redis_available:
             data = self._load_from_redis(self.KEY_BOT_STATE)
             if data:
-                logger.debug("✅ الحالة محملة من Redis")
+                logger.debug("✅ تم تحميل حالة البوت من ذاكرة Redis")
                 return data
 
-        # محاولة Supabase
         if self._db_available:
             return await self._load_bot_state_from_db()
 
-        logger.warning("⚠️ لا يمكن تحميل الحالة")
+        logger.warning("⚠️ تعذر تحميل حالة البوت من Redis و Supabase")
         return None
 
-    def _save_to_redis(
-        self,
-        key: str,
-        data: dict,
-        ttl: int = 3600
-    ) -> bool:
-        """حفظ في Redis"""
+    def _save_to_redis(self, key: str, data: dict, ttl: int = 3600) -> bool:
         if not self._redis_available:
             return False
         try:
-            self._redis.setex(
-                key,
-                ttl,
-                json.dumps(data, default=str)
-            )
+            self._redis.setex(key, ttl, json.dumps(data, default=str))
             return True
         except Exception as e:
-            logger.error(f"❌ Redis save خطأ: {e}")
+            logger.error(f"❌ خطأ عند الحفظ في Redis ({key}): {e}")
             return False
 
     def _load_from_redis(self, key: str) -> Optional[dict]:
-        """تحميل من Redis"""
         if not self._redis_available:
             return None
         try:
             raw = self._redis.get(key)
-            if raw:
-                return json.loads(raw)
-            return None
+            return json.loads(raw) if raw else None
         except Exception as e:
-            logger.error(f"❌ Redis load خطأ: {e}")
+            logger.error(f"❌ خطأ عند القراءة من Redis ({key}): {e}")
             return None
 
-    async def _save_bot_state_to_db(
-        self,
-        state: dict
-    ) -> bool:
-        """حفظ الحالة في Supabase"""
+    async def _save_bot_state_to_db(self, state: dict) -> bool:
         if not self._db_available:
             return False
         try:
+            now_iso = datetime.now(timezone.utc).isoformat()
             update_data = {
+                "id": 1,
                 "is_running": state.get("is_running", True),
                 "is_paused": state.get("is_paused", False),
-                "daily_loss": float(
-                    state.get("daily_loss", 0)
-                ),
-                "total_trades": int(
-                    state.get("total_trades", 0)
-                ),
-                "winning_trades": int(
-                    state.get("winning_trades", 0)
-                ),
-                "last_run_at": datetime.now(
-                    timezone.utc
-                ).isoformat(),
-                "updated_at": datetime.now(
-                    timezone.utc
-                ).isoformat()
+                "daily_loss": float(state.get("daily_loss", 0)),
+                "total_trades": int(state.get("total_trades", 0)),
+                "winning_trades": int(state.get("winning_trades", 0)),
+                "last_run_at": now_iso,
+                "updated_at": now_iso
             }
-
-            self._supabase.table("bot_state").upsert(
-                {**update_data, "id": 1},
-                on_conflict="id"
-            ).execute()
-
+            self._supabase.table("bot_state").upsert(update_data, on_conflict="id").execute()
             return True
-
         except Exception as e:
-            logger.error(f"❌ Supabase save state خطأ: {e}")
+            logger.error(f"❌ خطأ حفظ حالة البوت في Supabase: {e}")
             return False
 
-    async def _load_bot_state_from_db(
-        self
-    ) -> Optional[dict]:
-        """تحميل الحالة من Supabase"""
+    async def _load_bot_state_from_db(self) -> Optional[dict]:
         if not self._db_available:
             return None
         try:
-            result = self._supabase.table(
-                "bot_state"
-            ).select("*").eq("id", 1).execute()
-
+            result = self._supabase.table("bot_state").select("*").eq("id", 1).execute()
             if result.data:
                 row = result.data[0]
-                logger.debug("✅ الحالة محملة من Supabase")
+                logger.debug("✅ تم تحميل حالة البوت من Supabase")
                 return {
-                    "daily_loss": float(
-                        row.get("daily_loss", 0)
-                    ),
-                    "total_trades": int(
-                        row.get("total_trades", 0)
-                    ),
-                    "winning_trades": int(
-                        row.get("winning_trades", 0)
-                    ),
-                    "is_paused": bool(
-                        row.get("is_paused", False)
-                    )
+                    "daily_loss": float(row.get("daily_loss", 0)),
+                    "total_trades": int(row.get("total_trades", 0)),
+                    "winning_trades": int(row.get("winning_trades", 0)),
+                    "is_paused": bool(row.get("is_paused", False))
                 }
             return None
-
         except Exception as e:
-            logger.error(
-                f"❌ Supabase load state خطأ: {e}"
-            )
+            logger.error(f"❌ خطأ قراءة حالة البوت من Supabase: {e}")
             return None
 
     # ==========================================
-    # Open Positions Recovery
+    # 2. إدارة الصفقات واسترجاع الحالة (Positions)
     # ==========================================
 
     async def get_open_positions_from_db(self) -> List[Position]:
-        """
-        استرجاع كل الصفقات المفتوحة (status='OPEN') من Supabase
-        وإعادة بنائها ككائنات Position.
-
-        ضروري لأن GitHub Actions يشغّل container جديد تماماً كل
-        تشغيلة، وبالتالي أي صفقة محفوظة فقط في الذاكرة تُفقد.
-        هذه الدالة تُستدعى في بداية كل دورة لإعادة ملء
-        PositionManager بالحالة الحقيقية قبل مراجعة الصفقات.
-
-        ✅ يستعيد أيضاً حالة Trailing Stop / Break Even / TP1
-        الكاملة من الأعمدة المخصصة في جدول trades، حتى لا تُفقد
-        هذه الحماية بين كل تشغيلتين متتاليتين لـ GitHub Actions.
-        """
+        """استرجاع الصفقات المفتوحة من Supabase لإعادة إعمار الذاكرة عند بدء التشغيل."""
         if not self._db_available:
-            logger.warning(
-                "⚠️ Supabase غير متاح - لن تُسترجع الصفقات المفتوحة"
-            )
+            logger.warning("⚠️ Supabase غير متاح - يتعذر استرجاع الصفقات المفتوحة")
             return []
 
         try:
-            result = self._supabase.table("trades").select(
-                "*"
-            ).eq("status", "OPEN").execute()
-
+            result = self._supabase.table("trades").select("*").eq("status", "OPEN").execute()
             positions: List[Position] = []
 
             for row in (result.data or []):
                 try:
                     opened_at_raw = row.get("opened_at")
-                    opened_at = (
-                        datetime.fromisoformat(
-                            opened_at_raw.replace("Z", "+00:00")
-                        )
-                        if opened_at_raw
-                        else datetime.now(timezone.utc)
-                    )
+                    if opened_at_raw:
+                        opened_at = datetime.fromisoformat(str(opened_at_raw).replace("Z", "+00:00"))
+                    else:
+                        opened_at = datetime.now(timezone.utc)
 
                     position = Position(
                         id=row["id"],
@@ -285,12 +184,8 @@ class StateManager:
                         entry_price=float(row["entry_price"]),
                         current_price=float(row["entry_price"]),
                         stop_loss=float(row.get("stop_loss") or 0),
-                        take_profit_1=float(
-                            row.get("take_profit_1") or 0
-                        ),
-                        take_profit_2=float(
-                            row.get("take_profit_2") or 0
-                        ),
+                        take_profit_1=float(row.get("take_profit_1") or 0),
+                        take_profit_2=float(row.get("take_profit_2") or 0),
                         size_usd=float(row["size_usd"]),
                         leverage=int(row["leverage"]),
                         entry_fee=float(row.get("entry_fee") or 0),
@@ -298,73 +193,33 @@ class StateManager:
                         opened_at=opened_at,
                     )
 
-                    # ✅ استعادة حالة إدارة الصفقة الديناميكية
-                    position.tp1_executed = bool(
-                        row.get("tp1_executed", False)
-                    )
-                    position.trailing_active = bool(
-                        row.get("trailing_active", False)
-                    )
-                    position.trailing_stop = float(
-                        row.get("trailing_stop") or 0
-                    )
-                    position.breakeven_set = bool(
-                        row.get("breakeven_set", False)
-                    )
+                    # استرجاع خصائص التتبع والمخاطرة للصفقة
+                    position.tp1_executed = bool(row.get("tp1_executed", False))
+                    position.trailing_active = bool(row.get("trailing_active", False))
+                    position.trailing_stop = float(row.get("trailing_stop") or 0)
+                    position.breakeven_set = bool(row.get("breakeven_set", False))
 
-                    saved_high = float(
-                        row.get("highest_price") or 0
-                    )
-                    saved_low = float(
-                        row.get("lowest_price") or 0
-                    )
-                    position.highest_price = (
-                        saved_high
-                        if saved_high > 0
-                        else position.entry_price
-                    )
-                    position.lowest_price = (
-                        saved_low
-                        if saved_low > 0
-                        else position.entry_price
-                    )
+                    saved_high = float(row.get("highest_price") or 0)
+                    saved_low = float(row.get("lowest_price") or 0)
+                    position.highest_price = saved_high if saved_high > 0 else position.entry_price
+                    position.lowest_price = saved_low if saved_low > 0 else position.entry_price
 
                     positions.append(position)
-
                 except Exception as row_error:
-                    logger.error(
-                        f"❌ خطأ إعادة بناء صفقة "
-                        f"{row.get('id', '?')}: {row_error}"
-                    )
+                    logger.error(f"❌ خطأ إعادة بناء الصفقة {row.get('id', '?')}: {row_error}")
 
             if positions:
-                logger.info(
-                    f"🔄 تم استرجاع {len(positions)} صفقة مفتوحة "
-                    f"من قاعدة البيانات"
-                )
+                logger.info(f"🔄 تم استرجاع {len(positions)} صفقة مفتوحة من قاعدة البيانات")
 
             return positions
-
         except Exception as e:
             logger.error(f"❌ خطأ جلب الصفقات المفتوحة: {e}")
             return []
 
-    # ==========================================
-    # Trade Management
-    # ==========================================
-
-    async def save_trade(
-        self,
-        position: Position,
-        signal=None
-    ) -> bool:
-        """
-        حفظ صفقة جديدة في Supabase
-        """
+    async def save_trade(self, position: Position, signal=None) -> bool:
+        """حفظ صفقة جديدة في Supabase وذاكرة الكاش."""
         if not self._db_available:
-            logger.warning(
-                "⚠️ Supabase غير متاح - لن تُحفظ الصفقة"
-            )
+            logger.warning("⚠️ Supabase غير متاح - لم يتم تسجيل الصفقة جديداً")
             return False
 
         try:
@@ -373,43 +228,22 @@ class StateManager:
                 "symbol": position.symbol,
                 "direction": position.direction.value,
                 "exchange": position.exchange,
-                "mode": (
-                    signal.mode.value
-                    if signal else "UNKNOWN"
-                ),
+                "mode": signal.mode.value if signal and hasattr(signal, 'mode') else "UNKNOWN",
                 "entry_price": float(position.entry_price),
                 "stop_loss": float(position.stop_loss),
-                "take_profit_1": float(
-                    position.take_profit_1
-                ),
-                "take_profit_2": float(
-                    position.take_profit_2
-                ),
+                "take_profit_1": float(position.take_profit_1),
+                "take_profit_2": float(position.take_profit_2),
                 "size_usd": float(position.size_usd),
                 "leverage": int(position.leverage),
-                "position_value": float(
-                    position.position_value
-                ),
+                "position_value": float(position.position_value),
                 "entry_fee": float(position.entry_fee),
                 "exit_fee": float(position.exit_fee),
-                "total_fees": float(
-                    position.entry_fee + position.exit_fee
-                ),
-                "confidence": float(
-                    signal.confidence if signal else 0.0
-                ),
-                "signal_reasons": json.dumps(
-                    signal.reasons if signal else []
-                ),
-                "is_explosion": bool(
-                    signal.is_explosion if signal else False
-                ),
+                "total_fees": float(position.entry_fee + position.exit_fee),
+                "confidence": float(getattr(signal, 'confidence', 0.0)),
+                "signal_reasons": json.dumps(getattr(signal, 'reasons', [])),
+                "is_explosion": bool(getattr(signal, 'is_explosion', False)),
                 "status": "OPEN",
-                "opened_at": (
-                    position.opened_at.isoformat()
-                ),
-
-                # ✅ حالة إدارة الصفقة الديناميكية (قيم ابتدائية)
+                "opened_at": position.opened_at.isoformat(),
                 "tp1_executed": False,
                 "trailing_active": False,
                 "trailing_stop": 0,
@@ -418,36 +252,16 @@ class StateManager:
                 "lowest_price": float(position.entry_price),
             }
 
-            self._supabase.table("trades").insert(
-                trade_data
-            ).execute()
-
-            # حفظ في Redis أيضاً
+            self._supabase.table("trades").insert(trade_data).execute()
             self._cache_open_position(position)
-
-            logger.info(
-                f"💾 صفقة محفوظة: {position.id} | "
-                f"{position.symbol}"
-            )
+            logger.info(f"💾 تم حفظ الصفقة بنجاح: {position.id} | {position.symbol}")
             return True
-
         except Exception as e:
-            logger.error(f"❌ خطأ حفظ الصفقة: {e}")
+            logger.error(f"❌ خطأ حفظ الصفقة الجديدة: {e}")
             return False
 
-    async def update_position_state(
-        self,
-        position: Position
-    ) -> bool:
-        """
-        ✅ حفظ حالة إدارة الصفقة الديناميكية (Trailing / Break Even /
-        TP1 / الحجم المتبقي بعد إغلاق جزئي) في Supabase.
-
-        يجب استدعاء هذه الدالة في نهاية كل دورة لكل صفقة مفتوحة
-        (بعد update_price وبعد أي partial close)، وإلا فستُفقد هذه
-        الحالة عند التشغيلة التالية لأن GitHub Actions يبدأ عملية
-        جديدة تماماً كل مرة.
-        """
+    async def update_position_state(self, position: Position) -> bool:
+        """تحديث بيانات الصفقة أثناء عملها (Trailing, Break Even, TP1, Size)."""
         if not self._db_available:
             return False
 
@@ -463,72 +277,44 @@ class StateManager:
                 "lowest_price": float(position.lowest_price),
             }
 
-            self._supabase.table("trades").update(
-                update_data
-            ).eq("id", position.id).execute()
-
+            self._supabase.table("trades").update(update_data).eq("id", position.id).execute()
             return True
-
         except Exception as e:
-            logger.error(
-                f"❌ خطأ حفظ حالة الصفقة {position.id}: {e}"
-            )
+            logger.error(f"❌ خطأ تحديث حالة الصفقة {position.id}: {e}")
             return False
 
-    async def update_trade_closed(
-        self,
-        position: Position
-    ) -> bool:
-        """
-        تحديث الصفقة عند الإغلاق في Supabase
-        """
+    async def update_trade_closed(self, position: Position) -> bool:
+        """تحديث بيانات الصفقة عند الإغلاق النهائي وتحديث الإحصائيات اليومية."""
         if not self._db_available:
             return False
 
         try:
+            closed_at_val = (
+                position.closed_at.isoformat()
+                if getattr(position, 'closed_at', None)
+                else datetime.now(timezone.utc).isoformat()
+            )
             update_data = {
                 "exit_price": float(position.current_price),
                 "status": position.status.value,
                 "pnl": float(position.pnl),
                 "pnl_pct": float(position.pnl_pct),
                 "close_reason": position.status.value,
-                "closed_at": (
-                    position.closed_at.isoformat()
-                    if position.closed_at
-                    else datetime.now(timezone.utc).isoformat()
-                ),
-                "duration_minutes": float(
-                    position.duration_minutes
-                )
+                "closed_at": closed_at_val,
+                "duration_minutes": float(position.duration_minutes)
             }
 
-            self._supabase.table("trades").update(
-                update_data
-            ).eq("id", position.id).execute()
-
-            # تحديث الإحصاءات اليومية
+            self._supabase.table("trades").update(update_data).eq("id", position.id).execute()
             await self._update_daily_stats(position)
-
-            # حذف من Redis
             self._remove_cached_position(position.id)
 
-            logger.info(
-                f"💾 صفقة مُحدَّثة: {position.id} | "
-                f"P&L: ${position.pnl:.4f}"
-            )
+            logger.info(f"💾 تم تحديث إغلاق الصفقة: {position.id} | P&L: ${position.pnl:.4f}")
             return True
-
         except Exception as e:
-            logger.error(
-                f"❌ خطأ تحديث الصفقة: {e}"
-            )
+            logger.error(f"❌ خطأ تحديث إغلاق الصفقة: {e}")
             return False
 
-    def _cache_open_position(
-        self,
-        position: Position
-    ) -> None:
-        """حفظ الصفقة المفتوحة في Redis"""
+    def _cache_open_position(self, position: Position) -> None:
         if not self._redis_available:
             return
         try:
@@ -543,40 +329,24 @@ class StateManager:
                 "opened_at": position.opened_at.isoformat()
             }
             key = f"{self.KEY_OPEN_POSITIONS}:{position.id}"
-            self._redis.setex(
-                key,
-                86400,
-                json.dumps(pos_data)
-            )
+            self._redis.setex(key, 86400, json.dumps(pos_data))
         except Exception as e:
-            logger.debug(f"⚠️ Redis cache position: {e}")
+            logger.debug(f"⚠️ خطأ حفظ الصفقة المفتوحة في Redis: {e}")
 
-    def _remove_cached_position(
-        self,
-        position_id: str
-    ) -> None:
-        """حذف الصفقة من Redis"""
+    def _remove_cached_position(self, position_id: str) -> None:
         if not self._redis_available:
             return
         try:
-            key = (
-                f"{self.KEY_OPEN_POSITIONS}:{position_id}"
-            )
+            key = f"{self.KEY_OPEN_POSITIONS}:{position_id}"
             self._redis.delete(key)
         except Exception as e:
-            logger.debug(f"⚠️ Redis remove position: {e}")
+            logger.debug(f"⚠️ خطأ حذف الصفقة من Redis: {e}")
 
     # ==========================================
-    # Daily Stats
+    # 3. إحصائيات الأداء والـ Compounding
     # ==========================================
 
-    async def _update_daily_stats(
-        self,
-        position: Position
-    ) -> None:
-        """
-        تحديث إحصاءات اليوم في Supabase
-        """
+    async def _update_daily_stats(self, position: Position) -> None:
         if not self._db_available:
             return
 
@@ -584,56 +354,26 @@ class StateManager:
             today = date.today().isoformat()
             is_winner = position.pnl >= 0
 
-            # جلب إحصاءات اليوم الحالية
-            result = self._supabase.table(
-                "daily_performance"
-            ).select("*").eq("date", today).execute()
+            result = self._supabase.table("daily_performance").select("*").eq("date", today).execute()
 
             if result.data:
-                # تحديث
                 current = result.data[0]
+                total_trades = int(current.get("total_trades", 0)) + 1
+                winning_trades = int(current.get("winning_trades", 0)) + (1 if is_winner else 0)
+                losing_trades = int(current.get("losing_trades", 0)) + (0 if is_winner else 1)
+
                 update_data = {
-                    "total_trades": (
-                        int(current.get("total_trades", 0)) + 1
-                    ),
-                    "winning_trades": (
-                        int(current.get("winning_trades", 0))
-                        + (1 if is_winner else 0)
-                    ),
-                    "losing_trades": (
-                        int(current.get("losing_trades", 0))
-                        + (0 if is_winner else 1)
-                    ),
-                    "net_pnl": (
-                        float(current.get("net_pnl", 0))
-                        + position.pnl
-                    ),
-                    "total_fees": (
-                        float(current.get("total_fees", 0))
-                        + position.entry_fee
-                        + position.exit_fee
-                    ),
-                    "updated_at": datetime.now(
-                        timezone.utc
-                    ).isoformat()
+                    "total_trades": total_trades,
+                    "winning_trades": winning_trades,
+                    "losing_trades": losing_trades,
+                    "net_pnl": float(current.get("net_pnl", 0)) + position.pnl,
+                    "total_fees": float(current.get("total_fees", 0)) + position.entry_fee + position.exit_fee,
+                    "win_rate": round((winning_trades / total_trades) * 100, 2) if total_trades > 0 else 0.0,
+                    "updated_at": datetime.now(timezone.utc).isoformat()
                 }
 
-                # حساب Win Rate
-                total = update_data["total_trades"]
-                if total > 0:
-                    update_data["win_rate"] = round(
-                        update_data["winning_trades"]
-                        / total * 100, 2
-                    )
-
-                self._supabase.table(
-                    "daily_performance"
-                ).update(update_data).eq(
-                    "date", today
-                ).execute()
-
+                self._supabase.table("daily_performance").update(update_data).eq("date", today).execute()
             else:
-                # إدراج جديد
                 insert_data = {
                     "date": today,
                     "total_trades": 1,
@@ -641,94 +381,45 @@ class StateManager:
                     "losing_trades": 0 if is_winner else 1,
                     "win_rate": 100.0 if is_winner else 0.0,
                     "net_pnl": float(position.pnl),
-                    "total_fees": (
-                        float(position.entry_fee)
-                        + float(position.exit_fee)
-                    )
+                    "total_fees": float(position.entry_fee + position.exit_fee)
                 }
-
-                self._supabase.table(
-                    "daily_performance"
-                ).insert(insert_data).execute()
-
+                self._supabase.table("daily_performance").insert(insert_data).execute()
         except Exception as e:
-            logger.error(f"❌ خطأ تحديث إحصاءات اليوم: {e}")
+            logger.error(f"❌ خطأ تحديث الإحصائيات اليومية: {e}")
 
-    async def get_daily_stats(
-        self,
-        target_date: Optional[date] = None
-    ) -> Optional[dict]:
-        """
-        جلب إحصاءات يوم محدد
-        """
+    async def get_daily_stats(self, target_date: Optional[date] = None) -> Optional[dict]:
         if not self._db_available:
             return None
-
+        day = (target_date or date.today()).isoformat()
         try:
-            day = (target_date or date.today()).isoformat()
-
-            result = self._supabase.table(
-                "daily_performance"
-            ).select("*").eq("date", day).execute()
-
-            if result.data:
-                return result.data[0]
-            return None
-
+            result = self._supabase.table("daily_performance").select("*").eq("date", day).execute()
+            return result.data[0] if result.data else None
         except Exception as e:
-            logger.error(f"❌ خطأ جلب إحصاءات {day}: {e}")
+            logger.error(f"❌ خطأ جلب الإحصائيات اليومية لـ {day}: {e}")
             return None
 
-    async def get_recent_trades(
-        self,
-        limit: int = 20
-    ) -> List[dict]:
-        """
-        جلب آخر الصفقات المغلقة
-        """
+    async def get_recent_trades(self, limit: int = 20) -> List[dict]:
         if not self._db_available:
             return []
-
         try:
-            result = self._supabase.table(
-                "trades"
-            ).select(
-                "id, symbol, direction, mode, "
-                "entry_price, exit_price, pnl, "
-                "pnl_pct, status, opened_at, "
-                "closed_at, duration_minutes"
-            ).neq(
-                "status", "OPEN"
-            ).order(
-                "opened_at", desc=True
-            ).limit(limit).execute()
-
-            return result.data if result.data else []
-
+            result = self._supabase.table("trades").select(
+                "id, symbol, direction, mode, entry_price, exit_price, pnl, pnl_pct, status, opened_at, closed_at, duration_minutes"
+            ).neq("status", "OPEN").order("opened_at", desc=True).limit(limit).execute()
+            return result.data or []
         except Exception as e:
-            logger.error(f"❌ خطأ جلب الصفقات: {e}")
+            logger.error(f"❌ خطأ جلب الصفقات المغلقة المكتملة: {e}")
             return []
 
     async def get_performance_summary(self) -> dict:
-        """
-        ملخص الأداء الكامل
-        من Supabase مباشرة
-        """
         if not self._db_available:
             return {}
-
         try:
-            # إجمالي الصفقات
-            all_trades = self._supabase.table(
-                "trades"
-            ).select(
-                "pnl, status, pnl_pct"
-            ).neq("status", "OPEN").execute()
-
+            all_trades = self._supabase.table("trades").select("pnl, status, pnl_pct").neq("status", "OPEN").execute()
             if not all_trades.data:
                 return {
                     "total_trades": 0,
                     "winning_trades": 0,
+                    "losing_trades": 0,
                     "win_rate": 0.0,
                     "total_pnl": 0.0,
                     "avg_pnl": 0.0
@@ -736,118 +427,68 @@ class StateManager:
 
             trades = all_trades.data
             total = len(trades)
-            winners = sum(
-                1 for t in trades
-                if float(t.get("pnl", 0)) > 0
-            )
-            total_pnl = sum(
-                float(t.get("pnl", 0)) for t in trades
-            )
+            winners = sum(1 for t in trades if float(t.get("pnl", 0)) > 0)
+            total_pnl = sum(float(t.get("pnl", 0)) for t in trades)
 
             return {
                 "total_trades": total,
                 "winning_trades": winners,
                 "losing_trades": total - winners,
-                "win_rate": round(
-                    winners / total * 100, 2
-                ) if total > 0 else 0.0,
+                "win_rate": round(winners / total * 100, 2) if total > 0 else 0.0,
                 "total_pnl": round(total_pnl, 4),
-                "avg_pnl": round(
-                    total_pnl / total, 4
-                ) if total > 0 else 0.0
+                "avg_pnl": round(total_pnl / total, 4) if total > 0 else 0.0
             }
-
         except Exception as e:
-            logger.error(f"❌ خطأ جلب الأداء: {e}")
+            logger.error(f"❌ خطأ جلب الملخص الشامل للأداء: {e}")
             return {}
 
-    async def record_compounding(
-        self,
-        compound_amount: float,
-        reserved_amount: float
-    ) -> None:
-        """
-        تسجيل عملية Compounding
-        """
+    async def record_compounding(self, compound_amount: float, reserved_amount: float) -> None:
         if not self._db_available:
             return
-
         try:
             today = date.today().isoformat()
-
-            self._supabase.table(
-                "daily_performance"
-            ).upsert({
+            self._supabase.table("daily_performance").upsert({
                 "date": today,
-                "compounded_amount": round(
-                    compound_amount, 4
-                ),
-                "reserved_amount": round(
-                    reserved_amount, 4
-                ),
-                "updated_at": datetime.now(
-                    timezone.utc
-                ).isoformat()
+                "compounded_amount": round(compound_amount, 4),
+                "reserved_amount": round(reserved_amount, 4),
+                "updated_at": datetime.now(timezone.utc).isoformat()
             }, on_conflict="date").execute()
-
-            logger.info(
-                f"💰 Compounding: "
-                f"${compound_amount:.4f} محفوظ"
-            )
-
+            logger.info(f"💰 Compounding: ${compound_amount:.4f} تم حفظه في سجلات الأداء")
         except Exception as e:
-            logger.error(
-                f"❌ خطأ حفظ Compounding: {e}"
-            )
+            logger.error(f"❌ خطأ حفظ بيانات Compounding: {e}")
 
-    async def log_system_event(
-        self,
-        level: str,
-        message: str,
-        details: Optional[dict] = None
-    ) -> None:
-        """
-        حفظ حدث النظام في Supabase
-        """
+    async def log_system_event(self, level: str, message: str, details: Optional[dict] = None) -> None:
         if not self._db_available:
             return
-
         try:
             self._supabase.table("system_logs").insert({
                 "level": level,
                 "message": message,
-                "details": json.dumps(
-                    details or {}, default=str
-                ),
-                "created_at": datetime.now(
-                    timezone.utc
-                ).isoformat()
+                "details": json.dumps(details or {}, default=str),
+                "created_at": datetime.now(timezone.utc).isoformat()
             }).execute()
-
         except Exception as e:
-            logger.debug(f"⚠️ خطأ حفظ حدث: {e}")
+            logger.debug(f"⚠️ خطأ تسجيل حدث النظام: {e}")
+
+    # ==========================================
+    # 4. فحص الجاهزية والاتصال (Health Check)
+    # ==========================================
 
     def is_healthy(self) -> dict:
-        """
-        فحص صحة الاتصالات
-        """
+        """فحص جاهزية الاتصالات وحالتها اللحظية."""
         redis_ok = False
         db_ok = False
 
-        # فحص Redis
-        if self._redis_available:
+        if self._redis_available and self._redis is not None:
             try:
                 self._redis.ping()
                 redis_ok = True
             except Exception:
                 redis_ok = False
 
-        # فحص Supabase
-        if self._db_available:
+        if self._db_available and self._supabase is not None:
             try:
-                self._supabase.table(
-                    "bot_state"
-                ).select("id").limit(1).execute()
+                self._supabase.table("bot_state").select("id").limit(1).execute()
                 db_ok = True
             except Exception:
                 db_ok = False
