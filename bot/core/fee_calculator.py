@@ -1,57 +1,217 @@
-from typing import Dict, Any, Optional
+from dataclasses import dataclass
+from typing import Any, Dict, Optional, Union
+
 from loguru import logger
+
+
+@dataclass(frozen=True)
+class FeeResult:
+    """
+    نتيجة حساب رسوم الصفقة.
+    """
+
+    entry_fee: float
+    exit_fee: float
+    total_fee: float
+    breakeven_pct: float
 
 
 class FeeCalculator:
     """
-    حاسبة الرسوم وتكاليف الصفقات الفعلية (Fee Calculator) لمنظومة (Apex Trader).
-    تحسب بدقة رسوم المنصة (Maker / Taker) ومعدلات التمويل (Funding Rates) للصفقات الحية.
-    خالية تماماً من أي قيم وهمية.
+    حاسبة رسوم التداول.
+
+    تدعم الواجهتين التالية:
+
+    1. الواجهة المستخدمة في الاختبارات:
+        FeeCalculator("binance")
+        calculate(...)
+        adjust_targets(...)
+
+    2. الواجهة القديمة:
+        FeeCalculator({...})
+        calculate_trade_fees(...)
     """
 
-    def __init__(self, config: Optional[Dict[str, Any]] = None):
-        self.config = config or {}
-        # نسب رسوم افتراضية قياسية للمنصات (يمكن تجاوزها من ملف الإعدادات الحقيقي)
-        self.maker_fee_rate = float(self.config.get("maker_fee_rate", 0.0002))  # 0.02%
-        self.taker_fee_rate = float(self.config.get("taker_fee_rate", 0.0004))  # 0.04%
+    DEFAULT_RATES = {
+        "binance": {
+            "maker": 0.0002,
+            "taker": 0.0004,
+        },
+        "bybit": {
+            "maker": 0.0002,
+            "taker": 0.00055,
+        },
+    }
 
-    def calculate_trade_fees(self, size_usd: float, is_maker: bool = False) -> float:
+    def __init__(
+        self,
+        config: Optional[Union[str, Dict[str, Any], Any]] = None,
+    ):
+        self.exchange = "binance"
+        self.config: Dict[str, Any] = {}
+
+        if isinstance(config, str):
+            self.exchange = config.strip().lower()
+
+        elif isinstance(config, dict):
+            self.config = config
+            self.exchange = str(
+                config.get("exchange", "binance")
+            ).strip().lower()
+
+        elif config is not None:
+            # دعم AppConfig / Config وRiskConfig
+            self.config = self._config_to_dict(config)
+
+            exchange_value = self.config.get(
+                "exchange",
+                "binance",
+            )
+
+            if isinstance(exchange_value, str):
+                self.exchange = exchange_value.lower()
+
+        if self.exchange not in self.DEFAULT_RATES:
+            logger.warning(
+                "Unknown exchange '{}'; using Binance fee rates.",
+                self.exchange,
+            )
+            self.exchange = "binance"
+
+        rates = self.DEFAULT_RATES[self.exchange]
+
+        self.maker_fee_rate = self._get_rate(
+            "maker_fee_rate",
+            rates["maker"],
+        )
+
+        self.taker_fee_rate = self._get_rate(
+            "taker_fee_rate",
+            rates["taker"],
+        )
+
+        # دعم أسماء الإعدادات البديلة الموجودة في config.py
+        if self.exchange == "binance":
+            self.maker_fee_rate = self._get_rate(
+                "binance_maker_fee",
+                self.maker_fee_rate,
+            )
+            self.taker_fee_rate = self._get_rate(
+                "binance_taker_fee",
+                self.taker_fee_rate,
+            )
+
+        elif self.exchange == "bybit":
+            self.maker_fee_rate = self._get_rate(
+                "bybit_maker_fee",
+                self.maker_fee_rate,
+            )
+            self.taker_fee_rate = self._get_rate(
+                "bybit_taker_fee",
+                self.taker_fee_rate,
+            )
+
+    @staticmethod
+    def _config_to_dict(config: Any) -> Dict[str, Any]:
         """
-        حساب قيمة الرسوم المستقطعة بالدولار لفتح وإغلاق الصفقة بناءً على الحجم الحقيقي.
+        تحويل القواميس وكائنات الإعدادات إلى قاموس مسطح.
+        """
+        if isinstance(config, dict):
+            return dict(config)
+
+        result: Dict[str, Any] = {}
+
+        for name in (
+            "exchange",
+            "maker_fee_rate",
+            "taker_fee_rate",
+            "binance_maker_fee",
+            "binance_taker_fee",
+            "bybit_maker_fee",
+            "bybit_taker_fee",
+        ):
+            if hasattr(config, name):
+                value = getattr(config, name)
+
+                if name == "exchange" and not isinstance(
+                    value,
+                    str,
+                ):
+                    continue
+
+                result[name] = value
+
+        # دعم AppConfig.risk
+        risk = getattr(config, "risk", None)
+
+        if risk is not None:
+            for name in (
+                "binance_maker_fee",
+                "binance_taker_fee",
+                "bybit_maker_fee",
+                "bybit_taker_fee",
+            ):
+                if hasattr(risk, name):
+                    result[name] = getattr(risk, name)
+
+        return result
+
+    def _get_rate(
+        self,
+        name: str,
+        default: float,
+    ) -> float:
+        value = self.config.get(name, default)
+
+        try:
+            value = float(value)
+        except (TypeError, ValueError):
+            logger.warning(
+                "Invalid fee rate for '{}'; using {}.",
+                name,
+                default,
+            )
+            value = default
+
+        if value < 0:
+            logger.warning(
+                "Negative fee rate for '{}'; using {}.",
+                name,
+                default,
+            )
+            value = default
+
+        return value
+
+    def _rate_for_type(self, order_type: str) -> float:
+        normalized = str(order_type).strip().lower()
+
+        if normalized == "maker":
+            return self.maker_fee_rate
+
+        if normalized == "taker":
+            return self.taker_fee_rate
+
+        raise ValueError(
+            "order_type must be either 'maker' or 'taker'"
+        )
+
+    def calculate(
+        self,
+        position_size: float,
+        entry_type: str = "taker",
+        exit_type: str = "taker",
+    ) -> FeeResult:
+        """
+        حساب رسوم الدخول والخروج.
+
+        position_size:
+            القيمة الاسمية للصفقة بالدولار.
+
+        breakeven_pct:
+            نسبة التعادل المئوية. مثال:
+            0.0004 * 2 * 100 = 0.08%.
         """
         try:
-            if size_usd <= 0:
-                return 0.0
-
-            rate = self.maker_fee_rate if is_maker else self.taker_fee_rate
-            # الرسوم تُحسب عادة على إجمالي قيمة العقد (حجم الصفقة) للدخول والخروج
-            total_fee = size_usd * rate * 2.0
-            return round(total_fee, 4)
-
-        except Exception as error:
-            logger.error("❌ خطأ في حساب رسوم التداول: {}", error)
-            return 0.0
-
-    def is_trade_profitable_after_fees(self, entry_price: float, exit_price: float, size_usd: float, direction: str, is_maker: bool = False) -> bool:
-        """
-        التحقق مما إذا كان الربح الإجمالي يغطي رسوم التداول بدقة قبل تنفيذ الصفقة.
-        """
-        try:
-            if entry_price <= 0 or exit_price <= 0 or size_usd <= 0:
-                return False
-
-            # حساب الربح السعري الخام
-            price_diff = (exit_price - entry_price) if direction.upper() == "BUY" else (entry_price - exit_price)
-            gross_profit = (price_diff / entry_price) * size_usd
-
-            # حساب إجمالي الرسوم الحقيقية
-            total_fees = self.calculate_trade_fees(size_usd, is_maker)
-
-            # صافي الربح بعد خصم الرسوم
-            net_profit = gross_profit - total_fees
-
-            return net_profit > 0.0
-
-        except Exception as error:
-            logger.error("❌ خطأ أثناء تقييم جدوى الرسوم للصفقة: {}", error)
-            return False
+            position_size = float(position_size*
+
