@@ -130,13 +130,13 @@ class ApexTraderBot:
         logger.info(f"Market cycle: {datetime.now(timezone.utc).isoformat()}")
 
         # ✅ تنفيذ الإشارات المعلقة من Cloudflare Worker (pending_signals)
-        pending = await self.state_manager.get_pending_signals()
+        pending = self.state_manager.get_pending_signals()
         if pending:
             logger.info(f"Processing {len(pending)} pending signals from webhook...")
             for signal in pending:
                 try:
                     await self._execute_webhook_signal(signal)
-                    await self.state_manager.mark_signal_processed(signal["id"])
+                    self.state_manager.mark_signal_processed(signal["id"])
                     logger.info(f"✅ Processed pending signal #{signal['id']}: {signal['symbol']} {signal['action']}")
                 except Exception as e:
                     logger.error(f"❌ Failed to process pending signal #{signal['id']}: {e}")

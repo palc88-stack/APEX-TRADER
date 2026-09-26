@@ -230,7 +230,7 @@ class StateManager:
                 self.client.table("pending_signals")
                 .select("*")
                 .eq("status", "pending")
-                .order("created_at", ascending=True)
+                .order("created_at")
                 .execute()
             )
             return res.data if res and hasattr(res, "data") else []
