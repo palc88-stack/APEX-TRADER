@@ -593,6 +593,11 @@ class ApexTraderBot:
             await self.state_manager.mark_bot_stopped()
         except Exception:
             pass
+        # ✅ إغلاق موارد الـ exchange لتجنب تحذير unclosed connector
+        try:
+            await self.exchange.close()
+        except Exception:
+            pass
 
 
 # ─────────────────────────────────────────────────────────────────────────────
