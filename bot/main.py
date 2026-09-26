@@ -1,17 +1,11 @@
-# bot/main.py - الكود المُصحَّح (كامل + Webhook Endpoint)
+# bot/main.py - Binance Testnet polling trader
 
 import asyncio
 import logging
-import math
 import os
-import time  # ✅ إصلاح: كانت مستخدمة في handle_webhook_signal (time.time()) بدون استيراد → NameError مؤكّد عند تفعيل الشرط (order id فارغ و webhook_id فارغ)
+import time
 from datetime import datetime, timezone
-from typing import Dict, Any, Optional
 
-import aiohttp
-from aiohttp import web
-import redis.asyncio as aioredis
-from supabase import create_client, Client
 
 from bot.config import Config
 from bot.data.market_data import MarketDataManager
@@ -47,29 +41,12 @@ class ApexTraderBot:
         self.fee_calculator = FeeCalculator(self.config)
         self.position_manager = PositionManager()
 
-        self.supabase_client: Client = self._init_supabase()
         self.state_manager = StateManager(self.config)
         self.telegram = TelegramNotifier()
         # ✅ تتبع الحالة المالية اليومية
         self._daily_loss_used = 0.0
         self._daily_realized_pnl = 0.0
         self._current_balance = 0.0
-        # ✅ Webhook server
-        self._webhook_runner: Optional[web.AppRunner] = None
-        self._webhook_site: Optional[web.TCPSite] = None
-        self._webhook_port: int = 8080
-
-    def _init_supabase(self) -> Client:
-        try:
-            client = create_client(
-                self.config.database.supabase_url,
-                self.config.database.supabase_key
-            )
-            logger.info("✅ Supabase client initialized")
-            return client
-        except Exception as e:
-            logger.warning(f"⚠️ Supabase init failed (no valid keys): {e}")
-            return None
 
     # ✅ إصلاح: Heartbeat عبر StateManager
     async def start_heartbeat_loop(self, interval_seconds: int = 10):
@@ -131,21 +108,6 @@ class ApexTraderBot:
 
     async def process_market_cycle(self) -> None:
         logger.info(f"Market cycle: {datetime.now(timezone.utc).isoformat()}")
-
-        # ✅ تنفيذ الإشارات المعلقة من Cloudflare Worker (pending_signals)
-        pending = self.state_manager.get_pending_signals()
-        if pending:
-            logger.info(f"Processing {len(pending)} pending signals from webhook...")
-            for signal in pending:
-                try:
-                    await self._execute_webhook_signal(signal)
-                    if not self.state_manager.mark_signal_processed(signal["id"]):
-                        raise RuntimeError("signal execution succeeded but status persistence failed")
-                    logger.info(f"✅ Processed pending signal #{signal['id']}: {signal['symbol']} {signal['action']}")
-                except Exception as e:
-                    logger.error(f"❌ Failed to process pending signal #{signal['id']}: {e}")
-                    self.state_manager.mark_signal_failed(signal["id"], type(e).__name__)
-                    await self.telegram.send_error(f"Pending Signal Error #{signal['id']}: {type(e).__name__}")
 
         for symbol in self.config.trading.symbols:
             try:
@@ -378,220 +340,11 @@ class ApexTraderBot:
         except Exception:
             return 10.0
 
-    async def handle_webhook_signal(self, webhook_data: Dict[str, Any]) -> None:
-        """استقبال إشارات Webhook (TradingView) وتنفيذها فوراً"""
-        symbol = str(webhook_data.get("symbol", "")).strip().upper()
-        side = webhook_data.get("side", "").lower()
-        action = webhook_data.get("action", "").upper()
-        raw_price = webhook_data.get("price")
-        webhook_id = str(webhook_data.get("id", "")).strip()
-        try:
-            price = float(raw_price) if raw_price is not None else 0.0
-        except (TypeError, ValueError) as exc:
-            raise ValueError("invalid webhook price") from exc
-        if symbol not in set(self.config.trading.symbols):
-            raise ValueError("unsupported webhook symbol")
-        if side not in {"buy", "sell"} or action not in {"BUY", "SELL", "LONG", "SHORT"}:
-            raise ValueError("invalid webhook side or action")
-        if not webhook_id or len(webhook_id) > 100:
-            raise ValueError("missing or oversized webhook id")
-        if not math.isfinite(price) or price < 0:
-            raise ValueError("invalid webhook price")
-
-        logger.info(f"📥 Webhook Signal: {symbol} {side} @ {price} (id={webhook_id})")
-
-        # ✅ إصلاح: تطبيق حد الخسارة اليومي أيضاً على إشارات الـ Webhook (كان
-        # مفعّلاً فقط نظرياً في process_market_cycle وحتى هناك لم يكن يُفعَّل).
-        if self._daily_loss_used >= getattr(self, "_daily_loss_limit", float("inf")):
-            logger.warning(
-                f"🛑 حد الخسارة اليومي مُستنفَد ({self._daily_loss_used:.2f}$) — تجاهل إشارة Webhook لـ {symbol}"
-            )
-            return
-
-        # توحيد الاتجاه
-        if side == "buy" or action in ("BUY", "LONG"):
-            order_side = "buy"
-            direction = "LONG"
-        else:
-            order_side = "sell"
-            direction = "SHORT"
-
-        # 1. التحقق من المراكز المفتوحة
-        open_positions = self.state_manager.get_open_trades_from_db()
-        symbol_positions = [p for p in open_positions if p.get("symbol") == symbol]
-
-        if symbol_positions:
-            logger.warning(f"⚠️ يوجد مركز مفتوح بالفعل على {symbol} — تم تجاوز الإشارة")
-            return
-
-        # 2. فحص المخاطر (الثقة والحدود)
-        fake_signal = type("S", (), {
-            "symbol": symbol,
-            "action": direction,
-            "confidence": 0.85,
-            "price": price,
-        })()
-
-        if not self.risk_manager.check_risk_limits(
-            fake_signal,
-            open_positions=symbol_positions
-        ):
-            logger.warning(f"⚠️ risk_manager رفض الإشارة لـ {symbol}")
-            return
-
-        # 3. جلب السعر الحالي
-        if price <= 0:
-            ticker = await self.exchange.get_ticker(symbol)
-            current_price = float(ticker.get("last", 0))
-        else:
-            current_price = price
-
-        if current_price <= 0:
-            logger.error(f"❌ سعر غير صالح لـ {symbol}: {current_price}")
-            return
-
-        # 4. حساب الأسعار
-        risk_cfg = self.config.risk
-        sl_pct = risk_cfg.default_sl_pct / 100
-        tp1_pct = risk_cfg.tp1_pct / 100
-        tp2_pct = risk_cfg.tp2_pct / 100
-        leverage = risk_cfg.max_leverage
-        size_usd = self._calculate_position_size()
-
-        if order_side == "buy":
-            stop_loss = round(current_price * (1 - sl_pct), 6)
-            take_profit_1 = round(current_price * (1 + tp1_pct), 6)
-            take_profit_2 = round(current_price * (1 + tp2_pct), 6)
-        else:
-            stop_loss = round(current_price * (1 + sl_pct), 6)
-            take_profit_1 = round(current_price * (1 - tp1_pct), 6)
-            take_profit_2 = round(current_price * (1 - tp2_pct), 6)
-
-        # 5. فحص المخاطر المتقدمة
-        balance = await self.exchange.get_balance()
-        if not self.risk_manager.evaluate_risk(
-            account_balance=balance,
-            size_usd=size_usd,
-            leverage=leverage,
-            entry_price=current_price,
-            stop_loss=stop_loss,
-            direction=order_side
-        ):
-            logger.warning(f"⚠️ evaluate_risk رفض لـ {symbol}")
-            return
-
-        # 6. تنفيذ الأمر
-        order = await self.exchange.place_order(
-            symbol=symbol,
-            side=order_side,
-            amount=size_usd / current_price,
-            price=current_price,
-            stop_loss=stop_loss,
-            take_profit=take_profit_1
-        )
-
-        # 7. حفظ الصفقة
-        fee_result = self.fee_calculator.calculate(
-            position_size=size_usd * leverage
-        )
-        trade_record = {
-            "id": str(order.get("id", "") or webhook_id or f"web-{int(time.time())}"),
-            "symbol": symbol,
-            "direction": direction,
-            "mode": str(self.config.active_mode),
-            "exchange": self.config.exchange.primary_exchange(),
-            "entry_price": current_price,
-            "stop_loss": stop_loss,
-            "take_profit_1": take_profit_1,
-            "take_profit_2": take_profit_2,
-            "size_usd": size_usd,
-            "leverage": leverage,
-            "entry_fee": fee_result.entry_fee,
-            "exit_fee": fee_result.exit_fee,
-            "status": "OPEN",
-            "confidence": 0.85,
-            "opened_at": datetime.now(timezone.utc).isoformat(),
-            "tp1_executed": False,
-            "trailing_active": False,
-            "trailing_stop": 0,
-            "breakeven_set": False,
-            "highest_price": current_price,
-            "lowest_price": current_price,
-            "source": "webhook",
-        }
-        self.state_manager.save_trade_state(trade_record)
-        logger.info(f"✅ صفقة من.Webhook: {symbol} {order_side} @ {current_price} | ID: {trade_record['id']}")
-
-    async def _execute_webhook_signal(self, webhook_data: Dict[str, Any]) -> None:
-        """ Called from process_market_cycle to execute a pending webhook signal.
-            Reuses the same logic as handle_webhook_signal. """
-        await self.handle_webhook_signal(webhook_data)
-
-    # ── Webhook Server ──────────────────────────────────────────────────────────
-
-    async def start_webhook_server(self) -> None:
-        """بدء خادم webhook internal لاستقبال الإشارات من worker.js/TradingView"""
-        app = web.Application()
-        app.router.add_post('/webhook', self._webhook_handler)
-        self._webhook_runner = web.AppRunner(app)
-        await self._webhook_runner.setup()
-        self._webhook_site = web.TCPSite(self._webhook_runner, '0.0.0.0', self._webhook_port)
-        await self._webhook_site.start()
-        logger.info(f"🌐 Webhook server listening on port {self._webhook_port} (path: /webhook)")
-
-    async def stop_webhook_server(self) -> None:
-        """إيقاف خادم webhook"""
-        if self._webhook_site:
-            await self._webhook_site.stop()
-        if self._webhook_runner:
-            await self._webhook_runner.cleanup()
-        logger.info("🛑 Webhook server stopped")
-
-    async def _webhook_handler(self, request: web.Request) -> web.Response:
-        """استقبال إشارات من worker.js (TradingView)"""
-        if request.content_length is not None and request.content_length > 16 * 1024:
-            return web.json_response({"error": "Body too large"}, status=413)
-        # 1. التحقق من المصادقة
-        auth_header = request.headers.get('Authorization', '')
-        expected_auth = f"Bearer {self.config.webhook.internal_api_key}"
-        if not self.config.webhook.internal_api_key:
-            logger.warning("⚠️ INTERNAL_API_KEY غير مضبوط — الـ webhook مرفوض")
-            return web.json_response({"error": "Server not configured"}, status=503)
-        if auth_header != expected_auth:
-            logger.warning("⚠️ محاولة وصول غير مصرح بها إلى webhook")
-            return web.json_response({"error": "Unauthorized"}, status=401)
-
-        # 2. قراءة البيانات
-        try:
-            data = await request.json()
-            if not isinstance(data, dict):
-                raise ValueError("object required")
-        except Exception:
-            return web.json_response({"error": "Invalid JSON"}, status=400)
-
-        # 3. التحقق من صحة الإشارة
-        symbol = data.get("symbol", "")
-        side = data.get("side", "").lower()
-        action = data.get("action", "").upper()
-
-        if not symbol or side not in ("buy", "sell") or action not in ("BUY", "SELL", "LONG", "SHORT"):
-            logger.warning("⚠️ إشارة Webhook غير صالحة")
-            return web.json_response({"error": "Invalid signal format"}, status=400)
-
-        # 4. معالجة الإشارة
-        try:
-            await self.handle_webhook_signal(data)
-            return web.json_response({"success": True, "message": f"Signal processed for {symbol}"})
-        except Exception as e:
-            logger.error(f"❌ خطأ في معالجة الـ webhook: {e}", exc_info=True)
-            return web.json_response({"error": "Processing failed"}, status=500)
-
     async def run_forever(self, interval_seconds: int = 60) -> None:
-        """تشغيل الـ trading loop — يدعم وضع الدورة الواحدة عبر APEX_RUN_CYCLES"""
+        """Run direct exchange polling and the real heartbeat loop."""
         max_cycles = int(os.environ.get("APEX_RUN_CYCLES", 0) or 0)
         single_cycle = max_cycles > 0
 
-        await self.start_webhook_server()
         await self.initialize()
         heartbeat_task = asyncio.create_task(
             self.start_heartbeat_loop(interval_seconds=10)
@@ -617,7 +370,6 @@ class ApexTraderBot:
             # ✅ كتابة حالة الخروج واجبة — تضمن ظهور البيانات حتى في الدورة الواحدة
             await self.state_manager.update_heartbeat()
             await self.state_manager.mark_bot_stopped()
-            await self.stop_webhook_server()
             await self.shutdown()
 
     async def shutdown(self) -> None:

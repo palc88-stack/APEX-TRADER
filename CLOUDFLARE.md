@@ -1,17 +1,11 @@
 # Cloudflare deployment
 
-The repository uses **one Cloudflare Worker** named `pal` for both the dashboard and the webhook API.
+The repository uses one Cloudflare Worker named `pal` for the dashboard only.
 
 - Dashboard: `https://pal.pal-c88.workers.dev/`
-- Webhook endpoint: `https://pal.pal-c88.workers.dev/webhook`
-- Alternative API path: `https://pal.pal-c88.workers.dev/api/webhook`
+- The Worker serves the built `web/dist` assets for `GET` and `HEAD` requests.
+- Non-browser methods return `405`.
 
-The root GET request is served by the `web/dist` assets binding. POST requests must use `/webhook` or `/api/webhook`; the root asset path may return `405` because it is handled by the static asset layer.
+TradingView and the Worker webhook have been removed. The Python bot polls the configured exchange directly through `ccxt`; it does not depend on `pending_signals`, `WEBHOOK_SECRET`, or an inbound trading webhook.
 
-Required Worker secrets:
-
-- `SUPABASE_URL`
-- `SUPABASE_WRITE_KEY`
-- `WEBHOOK_SECRET`
-
-The webhook requires the `x-webhook-secret` header and validates the signal before inserting it into Supabase `pending_signals`. No Binance order is placed by the Worker.
+The browser build contains only the public Supabase URL and publishable key. Backend write keys and exchange credentials must never be included in `web/dist` or source control.

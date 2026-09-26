@@ -41,8 +41,9 @@ async def test_testnet_adapter_closes_without_network(monkeypatch):
 def test_worker_has_no_service_key_fallback():
     worker = (ROOT / "src/worker.js").read_text()
     assert "SUPABASE_SERVICE_KEY" not in worker
-    assert "resolution=ignore-duplicates" in worker
-    assert "AbortController" in worker
+    assert "ASSETS.fetch" in worker
+    assert "pending_signals" not in worker
+    assert "WEBHOOK_SECRET" not in worker
 
 
 def test_workflow_has_no_schedule_or_live_secret():
