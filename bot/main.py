@@ -80,8 +80,8 @@ class ApexTraderBot:
                 try:
                     balance = await self.exchange.get_balance()
                     self._daily_loss_limit = (
-                        float(self.config.risk.max_daily_loss_pct or 0.02)
-                        * balance
+                        float(self.config.risk.max_daily_loss_pct or 0.02) / 100.0
+                        * max(balance, 0.0)
                     )
                     await self.state_manager.update_bot_status(
                         balance=balance,
@@ -102,7 +102,7 @@ class ApexTraderBot:
         # ✅ فحص اتصال Supabase - إذا فشل، نكتب في واجهة مستقلة
         balance = await self.exchange.get_balance()
         self._daily_loss_limit = (
-            float(self.config.risk.max_daily_loss_pct or 0.02)
+            float(self.config.risk.max_daily_loss_pct or 0.02) / 100.0
             * max(balance, 0.0)
         )
 
@@ -593,9 +593,21 @@ class ApexTraderBot:
             await self.state_manager.mark_bot_stopped()
         except Exception:
             pass
-        # ✅ إغلاق موارد الـ exchange لتجنب تحذير unclosed connector
+        # ✅ إغلاق resources بالمنصة لتجنب تحذير unclosed connector
         try:
-            await self.exchange.close()
+            if self.exchange._exchange:
+                await self.exchange._exchange.close()
+        except Exception:
+            pass
+        # ✅ إغلاق أي aiohttp sessions متبقية
+        try:
+            import aiohttp
+            if aiohttp.client._all_sessions:
+                for session in list(aiohttp.client._all_sessions):
+                    try:
+                        await session.close()
+                    except Exception:
+                        pass
         except Exception:
             pass
 

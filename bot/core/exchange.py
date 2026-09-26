@@ -70,10 +70,13 @@ class ExchangeManager:
         """جلب السعر الحالي للرمز."""
         try:
             ticker = await self._exchange.fetch_ticker(symbol)
+            last_raw = ticker.get("last")
+            bid_raw = ticker.get("bid")
+            ask_raw = ticker.get("ask")
             return {
-                "last": float(ticker.get("last", 0)),
-                "bid": float(ticker.get("bid", 0)),
-                "ask": float(ticker.get("ask", 0)),
+                "last": float(last_raw) if last_raw is not None else 0.0,
+                "bid": float(bid_raw) if bid_raw is not None else 0.0,
+                "ask": float(ask_raw) if ask_raw is not None else 0.0,
             }
         except Exception as e:
             logger.error("❌ get_ticker {}: {}", symbol, e)
