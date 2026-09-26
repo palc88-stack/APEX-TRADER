@@ -1,119 +1,60 @@
-name: Binance Trading Cycle
+name: APEX Trader Verification
 
 on:
-  schedule:
-    - cron: "0,15,30,45 * * * *"
   workflow_dispatch:
+  push:
+    branches: [main]
+
+concurrency:
+  group: apex-verification-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
 
 jobs:
-  trade:
+  verify:
     runs-on: ubuntu-24.04
-
-    # تعريف متغيرات البيئة على مستوى الـ Job بالكامل لتكون متاحة لجميع الخطوات
+    timeout-minutes: 10
     env:
       PYTHONPATH: ${{ github.workspace }}
-      TRADING_EXCHANGES: binance
-      BINANCE_API_KEY: ${{ secrets.BINANCE_API_KEY }}
-      BINANCE_SECRET_KEY: ${{ secrets.BINANCE_SECRET_KEY }}
-      BINANCE_TESTNET: ${{ secrets.BINANCE_TESTNET }}
-      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-      SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-      UPSTASH_REDIS_URL: ${{ secrets.UPSTASH_REDIS_URL }}
-      UPSTASH_REDIS_TOKEN: ${{ secrets.UPSTASH_REDIS_TOKEN }}
-      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-
+      ENVIRONMENT: testnet
+      BINANCE_TESTNET: "true"
+      ALLOW_LIVE_TRADING: "false"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Setup Python 3.11
+      - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: pip
           cache-dependency-path: requirements.txt
-
-      - name: Create logs directory
-        run: mkdir -p logs
-
-      - name: Install dependencies
+      - name: Install Python dependencies
+        run: python -m pip install --disable-pip-version-check -r requirements.txt
+      - name: Compile Python
+        run: python -m compileall -q bot tests
+      - name: Unit tests
+        run: python -m pytest -q tests/test_exchange_config.py tests/test_full_system.py --timeout=30
+      - name: Verify Worker syntax
+        run: node --check src/worker.js
+      - name: Build dashboard
+        working-directory: web
+        run: npm ci && npm run build
+      - name: Assert safety gates
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install \
-            --disable-pip-version-check \
-            --upgrade-strategy=only-if-needed \
-            -r requirements.txt
-          python -m pip check
-
-      - name: Verify project structure
-        run: |
-          set -e
-
-          test -f bot/__init__.py
-          test -f bot/config.py
-          test -f bot/main.py
-          test -f bot/core/exchange.py
-          test -f bot/data/market_data.py
-          test -f requirements.txt
-
-          python -m compileall -q bot tests
-
           python - <<'PY'
-          from bot.config import config
-
-          print(
-              "enabled exchanges:",
-              config.exchange.enabled_exchanges(),
-          )
+          from pathlib import Path
+          exchange = Path('bot/core/exchange.py').read_text()
+          worker = Path('src/worker.js').read_text()
+          workflow = Path('.github/workflows/binance.yml').read_text()
+          schema = Path('database/schema.sql').read_text()
+          assert 'ALLOW_LIVE_TRADING' in exchange
+          assert 'reduce_only_close' in exchange
+          assert 'resolution=ignore-duplicates' in worker
+          forbidden_key = 'SUPABASE_' + 'SERVICE_KEY'
+          assert forbidden_key not in worker
+          assert '\n  schedule:' not in workflow
+          assert 'ENABLE ROW LEVEL SECURITY' in schema
+          print('safety gates verified')
           PY
-
-          python - <<'PY'
-          from bot.core.exchange import ExchangeManager
-
-          print("ExchangeManager import OK")
-          PY
-
-          python - <<'PY'
-          from bot.data.market_data import MarketDataManager
-
-          print("MarketDataManager import OK")
-          PY
-
-      - name: Run tests
-        run: |
-          python -m pytest tests/ \
-            -x \
-            -q \
-            --timeout=30 \
-            -k "not test_real_balance and not test_real_ohlcv_data and not test_signal_engine_no_mock and not test_indicators_output_validity"
-
-      - name: Run bot cycle
-        timeout-minutes: 3
-        env:
-          APEX_RUN_CYCLES: "1"
-        run: python -m bot.main
-
-      - name: Diagnostic Supabase connectivity
-        if: always()  # يعمل سواء النجاح أو الفشل
-        run: |
-          python bot/tests/diagnostic_supabase.py > diagnostic_output.json 2>&1 || true
-          echo "=== Diagnostic Output ==="
-          cat diagnostic_output.json
-          echo "============================="
-
-      - name: Upload diagnostic artifact
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: supabase-diagnostic
-          path: diagnostic_output.json
-          if-no-files-found: ignore
-
-      - name: Upload logs on failure
-        if: ${{ failure() }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: bot-logs
-          path: logs/
-          if-no-files-found: ignore

@@ -1,5 +1,6 @@
 # bot/data/state_manager.py - الكود المُصحَّح (كامل)
 import os
+import socket
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
@@ -25,6 +26,8 @@ class StateManager:
         )
         supabase_key = (
             getattr(getattr(config, "database", None), "supabase_key", None)
+            or os.getenv("SUPABASE_WRITE_KEY", "")
+            or os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
             or os.getenv("SUPABASE_KEY", "")
         )
 
@@ -222,18 +225,27 @@ class StateManager:
     # ─── Pending Signals ( webhook ↔ bot) ────────────────────────────────────────────
 
     def get_pending_signals(self) -> List[Dict[str, Any]]:
-        """استرجاع جميع الإشارات المعلقة من Supabase (من Cloudflare Worker)"""
+        """Claim pending signals atomically before returning them to the worker."""
         if not self.client:
             return []
         try:
-            res = (
+            pending = (
                 self.client.table("pending_signals")
                 .select("*")
                 .eq("status", "pending")
                 .order("created_at")
                 .execute()
             )
-            return res.data if res and hasattr(res, "data") else []
+            owner = f"{socket.gethostname()}:{os.getpid()}"
+            claimed: List[Dict[str, Any]] = []
+            for signal in (pending.data if pending and hasattr(pending, "data") else []):
+                result = self.client.rpc(
+                    "claim_pending_signal",
+                    {"p_signal_id": int(signal["id"]), "p_owner": owner},
+                ).execute()
+                if result and getattr(result, "data", None):
+                    claimed.extend(result.data)
+            return claimed
         except Exception as e:
             logger.error("❌ get_pending_signals: {}", e)
             return []
@@ -243,12 +255,29 @@ class StateManager:
         if not self.client:
             return False
         try:
-            self.client.table("pending_signals").update({
+            result = self.client.table("pending_signals").update({
                 "status": "processed",
                 "processed_at": datetime.now(timezone.utc).isoformat(),
-            }).eq("id", signal_id).execute()
+            }).eq("id", signal_id).eq("status", "processing").execute()
+            if not getattr(result, "data", None):
+                logger.error("❌ signal #{} was not in processing state", signal_id)
+                return False
             logger.info("✅ تم وضع علامة Processed على pending_signal #{}", signal_id)
             return True
         except Exception as e:
             logger.error("❌ mark_signal_processed: {}", e)
+            return False
+
+    def mark_signal_failed(self, signal_id: int, error: str) -> bool:
+        """Move a claimed signal to failed without exposing raw exception data."""
+        if not self.client:
+            return False
+        try:
+            result = self.client.table("pending_signals").update({
+                "status": "failed",
+                "last_error": str(error)[:500],
+            }).eq("id", signal_id).eq("status", "processing").execute()
+            return bool(getattr(result, "data", None))
+        except Exception as exc:
+            logger.error("❌ mark_signal_failed: {}", exc)
             return False

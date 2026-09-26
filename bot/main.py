@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import math
 import os
 import time  # ✅ إصلاح: كانت مستخدمة في handle_webhook_signal (time.time()) بدون استيراد → NameError مؤكّد عند تفعيل الشرط (order id فارغ و webhook_id فارغ)
 from datetime import datetime, timezone
@@ -52,6 +53,7 @@ class ApexTraderBot:
         # ✅ تتبع الحالة المالية اليومية
         self._daily_loss_used = 0.0
         self._daily_realized_pnl = 0.0
+        self._current_balance = 0.0
         # ✅ Webhook server
         self._webhook_runner: Optional[web.AppRunner] = None
         self._webhook_site: Optional[web.TCPSite] = None
@@ -79,10 +81,12 @@ class ApexTraderBot:
                 # ✅ تحديث الحالة المالية كل دورة
                 try:
                     balance = await self.exchange.get_balance()
+                    if balance <= 0:
+                        raise RuntimeError("invalid or unavailable exchange balance")
+                    self._current_balance = balance
                     self._daily_loss_limit = (
-                        float(self.config.risk.max_daily_loss_pct or 0.02) / 100.0
-                        * max(balance, 0.0)
-                    )
+                        float(self.config.risk.max_daily_loss_pct or 4.0) / 100.0
+                    ) * balance
                     await self.state_manager.update_bot_status(
                         balance=balance,
                         daily_loss_used=self._daily_loss_used,
@@ -101,9 +105,12 @@ class ApexTraderBot:
 
         # ✅ فحص اتصال Supabase - إذا فشل، نكتب في واجهة مستقلة
         balance = await self.exchange.get_balance()
+        if balance <= 0:
+            raise RuntimeError("cannot initialize without a valid exchange balance")
+        self._current_balance = balance
         self._daily_loss_limit = (
-            float(self.config.risk.max_daily_loss_pct or 0.02) / 100.0
-            * max(balance, 0.0)
+            float(self.config.risk.max_daily_loss_pct or 4.0) / 100.0
+            * balance
         )
 
         # كتابة الحالة الأولية
@@ -114,12 +121,8 @@ class ApexTraderBot:
             daily_loss_limit=self._daily_loss_limit,
         )
 
-        # ✅ إذا Supabase غير متصل، نسجّل تحذيراً واضحاً
         if self.state_manager.client is None:
-            logger.warning(
-                "⚠️ Supabase غير متصل — لن تظهر بيانات في الـ Dashboard. "
-                "تأكد من SUPABASE_URL و SUPABASE_KEY في البيئة."
-            )
+            raise RuntimeError("Supabase is required for safe state persistence")
 
         await self.telegram.send_startup(
             balance=balance,
@@ -136,11 +139,13 @@ class ApexTraderBot:
             for signal in pending:
                 try:
                     await self._execute_webhook_signal(signal)
-                    self.state_manager.mark_signal_processed(signal["id"])
+                    if not self.state_manager.mark_signal_processed(signal["id"]):
+                        raise RuntimeError("signal execution succeeded but status persistence failed")
                     logger.info(f"✅ Processed pending signal #{signal['id']}: {signal['symbol']} {signal['action']}")
                 except Exception as e:
                     logger.error(f"❌ Failed to process pending signal #{signal['id']}: {e}")
-                    await self.telegram.send_error(f"Pending Signal Error #{signal['id']}: {str(e)}")
+                    self.state_manager.mark_signal_failed(signal["id"], type(e).__name__)
+                    await self.telegram.send_error(f"Pending Signal Error #{signal['id']}: {type(e).__name__}")
 
         for symbol in self.config.trading.symbols:
             try:
@@ -152,7 +157,10 @@ class ApexTraderBot:
                     continue
 
                 ticker = await self.exchange.get_ticker(symbol)
-                current_price = float(ticker["last"])
+                current_price = float(ticker.get("last") or 0.0)
+                if current_price <= 0:
+                    logger.warning("Skipping %s: exchange returned no valid ticker", symbol)
+                    continue
 
                 # 2. إدارة المراكز المفتوحة
                 open_positions = self.state_manager.get_open_trades_from_db()
@@ -186,26 +194,22 @@ class ApexTraderBot:
                         )
                         try:
                             partial_amount = (pos_obj.size_usd * pos_obj.leverage / current_price) * (pct / 100.0)
-                            await self.exchange.place_order(
+                            await self.exchange.reduce_only_close(
                                 symbol=symbol,
-                                side=("sell" if pos_obj.direction.value == "LONG" else "buy"),
                                 amount=partial_amount,
-                                price=current_price,
-                                stop_loss=pos_obj.stop_loss,
-                                take_profit=pos_obj.take_profit_2,
+                                reason="tp1",
                             )
                         except Exception as partial_err:
                             logger.error(f"❌ فشل تنفيذ الإغلاق الجزئي (TP1) لـ {symbol}: {partial_err}")
-                        self.state_manager.save_trade_state({
-                            **pos,
-                            "tp1_executed": True,
-                        })
-                        await self.telegram.send_partial_close(
-                            pos_obj, current_price, pct,
-                            partial_pnl=(current_price - pos_obj.entry_price) * pos_obj.size_usd * pos_obj.leverage / pos_obj.entry_price
-                            if pos_obj.direction.value == "LONG" else
-                            (pos_obj.entry_price - current_price) * pos_obj.size_usd * pos_obj.leverage / pos_obj.entry_price,
-                        )
+                        else:
+                            if not self.state_manager.save_trade_state({**pos, "tp1_executed": True}):
+                                raise RuntimeError("partial close executed but state persistence failed")
+                            await self.telegram.send_partial_close(
+                                pos_obj, current_price, pct,
+                                partial_pnl=(current_price - pos_obj.entry_price) * pos_obj.size_usd * pos_obj.leverage / pos_obj.entry_price
+                                if pos_obj.direction.value == "LONG" else
+                                (pos_obj.entry_price - current_price) * pos_obj.size_usd * pos_obj.leverage / pos_obj.entry_price,
+                            )
 
                     elif action and action.get("action") == "close":
                         order = await self.exchange.close_position(
@@ -298,6 +302,10 @@ class ApexTraderBot:
 
                 # ✅ تحقق evaluate_risk قبل التنفيذ
                 balance = await self.exchange.get_balance()
+                if balance <= 0:
+                    logger.error("Skipping new entry for %s: balance unavailable", symbol)
+                    continue
+                self._current_balance = balance
                 if not self.risk_manager.evaluate_risk(
                     account_balance=balance,
                     size_usd=size_usd,
@@ -315,7 +323,9 @@ class ApexTraderBot:
                     amount=size_usd / entry_price,
                     price=entry_price,
                     stop_loss=stop_loss,
-                    take_profit=take_profit_1
+                    take_profit=take_profit_1,
+                    leverage=leverage,
+                    client_order_id=f"apex-{symbol.replace('/', '')}-{int(time.time() * 1000)}",
                 )
 
                 # 6. حفظ الصفقة
@@ -349,7 +359,8 @@ class ApexTraderBot:
                     "highest_price": entry_price,
                     "lowest_price": entry_price
                 }
-                self.state_manager.save_trade_state(trade_record)
+                if not self.state_manager.save_trade_state(trade_record):
+                    raise RuntimeError("order executed but trade state could not be persisted")
                 logger.info(f"✅ صفقة جديدة: {symbol} {side} @ {entry_price}")
 
             except Exception as e:
@@ -359,7 +370,9 @@ class ApexTraderBot:
     def _calculate_position_size(self) -> float:
         """حساب حجم الصفقة بناءً على الرصيد وإعدادات المخاطر."""
         try:
-            initial = float(self.config.initial_balance)
+            initial = float(self._current_balance)
+            if initial <= 0:
+                raise ValueError("balance unavailable")
             pct = self.config.risk.max_position_pct / 100
             return round(initial * pct, 2)
         except Exception:
@@ -367,11 +380,23 @@ class ApexTraderBot:
 
     async def handle_webhook_signal(self, webhook_data: Dict[str, Any]) -> None:
         """استقبال إشارات Webhook (TradingView) وتنفيذها فوراً"""
-        symbol = webhook_data.get("symbol", "")
+        symbol = str(webhook_data.get("symbol", "")).strip().upper()
         side = webhook_data.get("side", "").lower()
         action = webhook_data.get("action", "").upper()
-        price = float(webhook_data.get("price", 0))
-        webhook_id = webhook_data.get("id", "")
+        raw_price = webhook_data.get("price")
+        webhook_id = str(webhook_data.get("id", "")).strip()
+        try:
+            price = float(raw_price) if raw_price is not None else 0.0
+        except (TypeError, ValueError) as exc:
+            raise ValueError("invalid webhook price") from exc
+        if symbol not in set(self.config.trading.symbols):
+            raise ValueError("unsupported webhook symbol")
+        if side not in {"buy", "sell"} or action not in {"BUY", "SELL", "LONG", "SHORT"}:
+            raise ValueError("invalid webhook side or action")
+        if not webhook_id or len(webhook_id) > 100:
+            raise ValueError("missing or oversized webhook id")
+        if not math.isfinite(price) or price < 0:
+            raise ValueError("invalid webhook price")
 
         logger.info(f"📥 Webhook Signal: {symbol} {side} @ {price} (id={webhook_id})")
 
@@ -524,6 +549,8 @@ class ApexTraderBot:
 
     async def _webhook_handler(self, request: web.Request) -> web.Response:
         """استقبال إشارات من worker.js (TradingView)"""
+        if request.content_length is not None and request.content_length > 16 * 1024:
+            return web.json_response({"error": "Body too large"}, status=413)
         # 1. التحقق من المصادقة
         auth_header = request.headers.get('Authorization', '')
         expected_auth = f"Bearer {self.config.webhook.internal_api_key}"
@@ -537,6 +564,8 @@ class ApexTraderBot:
         # 2. قراءة البيانات
         try:
             data = await request.json()
+            if not isinstance(data, dict):
+                raise ValueError("object required")
         except Exception:
             return web.json_response({"error": "Invalid JSON"}, status=400)
 
@@ -546,7 +575,7 @@ class ApexTraderBot:
         action = data.get("action", "").upper()
 
         if not symbol or side not in ("buy", "sell") or action not in ("BUY", "SELL", "LONG", "SHORT"):
-            logger.warning(f"⚠️ إشارة غير صالحة: {data}")
+            logger.warning("⚠️ إشارة Webhook غير صالحة")
             return web.json_response({"error": "Invalid signal format"}, status=400)
 
         # 4. معالجة الإشارة
@@ -581,6 +610,10 @@ class ApexTraderBot:
             logger.info("Shutting down...")
         finally:
             heartbeat_task.cancel()
+            try:
+                await heartbeat_task
+            except asyncio.CancelledError:
+                pass
             # ✅ كتابة حالة الخروج واجبة — تضمن ظهور البيانات حتى في الدورة الواحدة
             await self.state_manager.update_heartbeat()
             await self.state_manager.mark_bot_stopped()
@@ -593,21 +626,13 @@ class ApexTraderBot:
             await self.state_manager.mark_bot_stopped()
         except Exception:
             pass
-        # ✅ إغلاق resources بالمنصة لتجنب تحذير unclosed connector
+        # ✅ إغلاق موارد الـ exchange لتجنب تحذير unclosed connector
         try:
-            if self.exchange._exchange:
-                await self.exchange._exchange.close()
+            await self.exchange.close()
         except Exception:
             pass
-        # ✅ إغلاق أي aiohttp sessions متبقية
         try:
-            import aiohttp
-            if aiohttp.client._all_sessions:
-                for session in list(aiohttp.client._all_sessions):
-                    try:
-                        await session.close()
-                    except Exception:
-                        pass
+            await self.market_data.close()
         except Exception:
             pass
 
@@ -638,5 +663,6 @@ if __name__ == "__main__":
             _logger.info("⛔ توقف يدوياً")
         except Exception as e:
             _logger.error(f"❌ خطأ fatal: {e}", exc_info=True)
+            raise
 
     asyncio.run(_main())

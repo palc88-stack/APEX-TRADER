@@ -111,8 +111,14 @@ class WebhookConfig:
 
 @dataclass
 class DatabaseConfig:
-    supabase_url: str = field(default_factory=lambda: _env_text("SUPABASE_URL", "https://placeholder.supabase.co"))
-    supabase_key: str = field(default_factory=lambda: _env_text("SUPABASE_KEY", "placeholder-key"))
+    # Empty defaults fail closed; never connect to a fabricated project.
+    supabase_url: str = field(default_factory=lambda: _env_text("SUPABASE_URL", ""))
+    supabase_key: str = field(
+        default_factory=lambda: _env_text(
+            "SUPABASE_WRITE_KEY",
+            _env_text("SUPABASE_SERVICE_ROLE_KEY", _env_text("SUPABASE_KEY", "")),
+        )
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -182,6 +188,7 @@ class Config:
     initial_balance: float = field(default_factory=lambda: _env_float("INITIAL_BALANCE", 100.0))
     active_mode: str = field(default_factory=lambda: _env_text("ACTIVE_MODE", "HUNTER").upper())
     environment: str = field(default_factory=lambda: _env_text("ENVIRONMENT", "testnet"))
+    allow_live_trading: bool = field(default_factory=lambda: _env_bool("ALLOW_LIVE_TRADING", False))
 
     # ── Methods for backward compatibility with config.get(key) pattern ──
     def get(self, key: str, default: str = "") -> str:

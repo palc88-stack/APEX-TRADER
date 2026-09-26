@@ -168,21 +168,58 @@ CREATE INDEX IF NOT EXISTS idx_trades_opened_at ON trades (opened_at DESC);
 -- main.py → فلترة الصفقات المفتوحة حسب الرمز في كل دورة
 CREATE INDEX IF NOT EXISTS idx_trades_symbol_status ON trades (symbol, status);
 
--- ═══════════════════════════════════════════════════════════════════════
--- ملاحظة أمنية (توصية، وليست خطأ برمجياً): لا توجد سياسات Row Level
--- Security (RLS) معرَّفة هنا. إن كان مفتاح VITE_SUPABASE_ANON_KEY
--- المُستخدَم في web/src/App.jsx مكشوفاً في حزمة الواجهة الأمامية (وهو
--- كذلك بطبيعة تصميم Vite/متغيرات VITE_*)، فإن ترك RLS معطّلاً يعني أن أي
--- شخص يملك هذا المفتاح العام يمكنه قراءة (وربما تعديل) جدولي trades
--- وbot_state مباشرة من Supabase، متجاوزاً شاشة تسجيل الدخول في الواجهة.
--- يُنصح بتفعيل ما يلي إن أردت حماية حقيقية على مستوى القاعدة:
---
--- ALTER TABLE trades ENABLE ROW LEVEL SECURITY;
--- ALTER TABLE bot_state ENABLE ROW LEVEL SECURITY;
--- CREATE POLICY "authenticated_read_trades" ON trades
---     FOR SELECT USING (auth.role() = 'authenticated');
--- CREATE POLICY "authenticated_read_bot_state" ON bot_state
---     FOR SELECT USING (auth.role() = 'authenticated');
--- (والسماح بالكتابة فقط عبر service_role key الذي يستخدمه البوت نفسه،
---  لا عبر anon key المكشوف للواجهة).
--- ═══════════════════════════════════════════════════════════════════════
+-- ===== Idempotency, bounded state transitions, and RLS =====
+ALTER TABLE pending_signals ENABLE ROW LEVEL SECURITY;
+ALTER TABLE trades ENABLE ROW LEVEL SECURITY;
+ALTER TABLE bot_state ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE pending_signals
+    ADD COLUMN IF NOT EXISTS processing_owner TEXT,
+    ADD COLUMN IF NOT EXISTS processing_started_at TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS attempt_count INTEGER NOT NULL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS last_error TEXT;
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_pending_signals_webhook_id
+    ON pending_signals (webhook_id) WHERE webhook_id IS NOT NULL;
+
+ALTER TABLE pending_signals DROP CONSTRAINT IF EXISTS pending_signals_status_check;
+ALTER TABLE pending_signals ADD CONSTRAINT pending_signals_status_check
+    CHECK (status IN ('pending', 'processing', 'processed', 'failed'));
+ALTER TABLE pending_signals DROP CONSTRAINT IF EXISTS pending_signals_side_check;
+ALTER TABLE pending_signals ADD CONSTRAINT pending_signals_side_check
+    CHECK (lower(side) IN ('buy', 'sell'));
+ALTER TABLE pending_signals DROP CONSTRAINT IF EXISTS pending_signals_action_check;
+ALTER TABLE pending_signals ADD CONSTRAINT pending_signals_action_check
+    CHECK (upper(action) IN ('BUY', 'SELL', 'LONG', 'SHORT'));
+ALTER TABLE pending_signals DROP CONSTRAINT IF EXISTS pending_signals_price_check;
+ALTER TABLE pending_signals ADD CONSTRAINT pending_signals_price_check
+    CHECK (price IS NULL OR price > 0);
+
+DROP POLICY IF EXISTS authenticated_read_bot_state ON bot_state;
+CREATE POLICY authenticated_read_bot_state ON bot_state
+    FOR SELECT TO authenticated USING (true);
+DROP POLICY IF EXISTS authenticated_read_trades ON trades;
+CREATE POLICY authenticated_read_trades ON trades
+    FOR SELECT TO authenticated USING (true);
+
+REVOKE ALL ON TABLE pending_signals FROM anon, authenticated;
+REVOKE INSERT, UPDATE, DELETE ON TABLE bot_state FROM anon, authenticated;
+REVOKE INSERT, UPDATE, DELETE ON TABLE trades FROM anon, authenticated;
+
+CREATE OR REPLACE FUNCTION public.claim_pending_signal(p_signal_id INTEGER, p_owner TEXT)
+RETURNS SETOF public.pending_signals
+LANGUAGE sql SECURITY DEFINER SET search_path = public
+AS $$
+    UPDATE public.pending_signals
+       SET status = 'processing',
+           processing_owner = p_owner,
+           processing_started_at = now(),
+           attempt_count = attempt_count + 1
+     WHERE id = p_signal_id
+       AND (status = 'pending'
+            OR (status = 'processing' AND processing_started_at < now() - interval '10 minutes'))
+    RETURNING *;
+$$;
+
+REVOKE ALL ON FUNCTION public.claim_pending_signal(INTEGER, TEXT) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.claim_pending_signal(INTEGER, TEXT) TO service_role;
