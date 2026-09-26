@@ -205,6 +205,9 @@ CREATE POLICY authenticated_read_trades ON trades
 REVOKE ALL ON TABLE pending_signals FROM anon, authenticated;
 REVOKE INSERT, UPDATE, DELETE ON TABLE bot_state FROM anon, authenticated;
 REVOKE INSERT, UPDATE, DELETE ON TABLE trades FROM anon, authenticated;
+GRANT USAGE ON SCHEMA public TO authenticated;
+GRANT SELECT ON TABLE bot_state, trades TO authenticated;
+REVOKE INSERT, UPDATE, DELETE ON TABLE bot_state, trades FROM authenticated;
 
 CREATE OR REPLACE FUNCTION public.claim_pending_signal(p_signal_id INTEGER, p_owner TEXT)
 RETURNS SETOF public.pending_signals
