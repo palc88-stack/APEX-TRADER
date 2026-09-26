@@ -1,4 +1,4 @@
-// APEX-TRADER hardened Cloudflare Worker.
+// APEX-TRADER unified Cloudflare Worker: static dashboard + webhook API.
 // Required secrets: WEBHOOK_SECRET, SUPABASE_URL, SUPABASE_WRITE_KEY.
 
 const MAX_BODY_BYTES = 16 * 1024;
@@ -27,7 +27,14 @@ async function readJsonWithLimit(request) {
 
 export default {
   async fetch(request, env) {
+    const url = new URL(request.url);
     const allowedOrigin = env.TRADINGVIEW_ORIGIN || "https://www.tradingview.com";
+
+    // The same Worker serves the dashboard for browser navigation.
+    if (request.method === "GET" || request.method === "HEAD") {
+      return env.ASSETS.fetch(request);
+    }
+
     if (request.method === "OPTIONS") {
       return new Response(null, {
         status: 204,
@@ -38,6 +45,7 @@ export default {
         },
       });
     }
+
     if (request.method !== "POST") return json({ error: "method_not_allowed" }, 405, allowedOrigin);
     if (!env.WEBHOOK_SECRET || !env.SUPABASE_URL || !env.SUPABASE_WRITE_KEY) {
       return json({ error: "server_not_configured" }, 503, allowedOrigin);

@@ -1,9 +1,14 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "apex-trader-webhook",
+  "name": "pal",
   "main": "src/worker.js",
   "compatibility_date": "2026-09-25",
   "observability": {
     "enabled": true
+  },
+  "assets": {
+    "directory": "web/dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application"
   }
 }
