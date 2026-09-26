@@ -1,4 +1,26 @@
--- database/schema.sql - bot_state المُحسَّن
+-- database/schema.sql - الكود المُصحَّح
+-- ═══════════════════════════════════════════════════════════════════════
+-- ✅ إصلاح خلل حرج #1 (مؤكَّد بالقراءة المباشرة): كان السطر يبدأ بـ "|--"
+--    بدلاً من "--" قبل تعريف جدول pending_signals. هذا الحرف "|" ليس جزءاً
+--    من صيغة SQL الصحيحة، وإذا نُفِّذ هذا الملف كسكربت واحد (وهو الاستخدام
+--    الشائع في محرر SQL الخاص بـ Supabase)، سيتوقف التنفيذ عند هذا السطر
+--    بخطأ Syntax Error، ولن يُنشأ جدول pending_signals إطلاقاً — أي أن كل
+--    مسار إشارات TradingView/webhook سيفشل بالكامل من قاعدته.
+--
+-- ✅ إصلاح خلل حرج #2 (مؤكَّد بالبحث الشامل grep في كامل الريبو): جدول
+--    "trades" غير معرَّف إطلاقاً في أي مكان بالمشروع، رغم أن bot/main.py
+--    وbot/data/state_manager.py وweb/src/App.jsx (لوحة المتابعة) تعتمد
+--    عليه بشكل كامل لحفظ/قراءة كل الصفقات. بدون هذا الجدول:
+--      - save_trade_state() تفشل بصمت في كل مرة (يُلتقط الخطأ ويُسجَّل فقط)
+--      - لا تُحفظ أي صفقة إطلاقاً، ولا يمكن استعادة المراكز بعد إعادة التشغيل
+--      - لوحة المتابعة (App.jsx) تعرض خطأ "الصفقات: relation trades does not
+--        exist" ولا تُظهر أي بيانات أبداً.
+--    تم بناء الأعمدة أدناه بمطابقة تامة لكل حقل يُستخدم فعلياً في:
+--      bot/main.py (trade_record في الفتح والإغلاق والـ webhook)
+--      web/src/App.jsx (استعلام SELECT الخاص بالصفقات، بما فيها "mode"
+--        و"duration_minutes" اللذان تم أيضاً إصلاح حفظهما في main.py).
+-- ═══════════════════════════════════════════════════════════════════════
+
 -- ===== جدول حالة البوت (مُحسَّن) =====
 CREATE TABLE IF NOT EXISTS bot_state (
     id INTEGER PRIMARY KEY DEFAULT 1,
@@ -55,7 +77,8 @@ ALTER TABLE bot_state
 ALTER TABLE bot_state
     ADD COLUMN IF NOT EXISTS daily_realized_pnl DECIMAL(10, 2) DEFAULT 0.00;
 
-|-- ===== جدول pending_signals (للاستقبال من Cloudflare Worker) =====
+-- ===== جدول pending_signals (للاستقبال من Cloudflare Worker) =====
+-- ✅ تم إصلاح "|--" → "--" (كانت هذه هي نقطة توقف تنفيذ السكربت بالكامل)
 CREATE TABLE IF NOT EXISTS pending_signals (
     id SERIAL PRIMARY KEY,
     symbol VARCHAR(20) NOT NULL,
@@ -84,3 +107,82 @@ ALTER TABLE pending_signals
     ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();
 ALTER TABLE pending_signals
     ADD COLUMN IF NOT EXISTS processed_at TIMESTAMPTZ;
+
+-- فهرس لتسريع get_pending_signals() في state_manager.py (يستعلم status='pending')
+CREATE INDEX IF NOT EXISTS idx_pending_signals_status
+    ON pending_signals (status, created_at);
+
+-- ═══════════════════════════════════════════════════════════════════════
+-- ===== جدول trades (مفقود بالكامل سابقاً — أُضيف هنا) =====
+-- ═══════════════════════════════════════════════════════════════════════
+-- ملاحظة: "id" نصي (TEXT) وليس رقمياً لأن الكود يحفظ فيه أحياناً معرّف
+-- الأمر من المنصة (order id من ccxt، وقد يكون نصياً)، وأحياناً معرّفاً
+-- مولَّداً محلياً بصيغة "web-<timestamp>" في مسار الـ webhook
+-- (راجع bot/main.py: handle_webhook_signal).
+CREATE TABLE IF NOT EXISTS trades (
+    id TEXT PRIMARY KEY,
+    symbol VARCHAR(20) NOT NULL,
+    direction VARCHAR(10) NOT NULL,             -- LONG | SHORT
+    mode VARCHAR(20),                           -- ✅ تُقرأ من App.jsx SELECT
+    exchange VARCHAR(20) DEFAULT 'binance',
+    source VARCHAR(20) DEFAULT 'engine',        -- 'engine' أو 'webhook'
+
+    entry_price DECIMAL(18, 8) NOT NULL,
+    exit_price DECIMAL(18, 8),
+    stop_loss DECIMAL(18, 8),
+    take_profit_1 DECIMAL(18, 8),
+    take_profit_2 DECIMAL(18, 8),
+
+    size_usd DECIMAL(18, 4) NOT NULL,
+    leverage INTEGER DEFAULT 10,
+
+    entry_fee DECIMAL(18, 8) DEFAULT 0,
+    exit_fee DECIMAL(18, 8) DEFAULT 0,
+
+    confidence DECIMAL(5, 4) DEFAULT 0,
+
+    status VARCHAR(20) DEFAULT 'OPEN',          -- OPEN | CLOSED
+    close_reason VARCHAR(30),                   -- tp1 | tp2 | stop_loss | trailing_stop | manual
+
+    pnl DECIMAL(18, 4) DEFAULT 0,
+    pnl_pct DECIMAL(10, 4) DEFAULT 0,
+    duration_minutes DECIMAL(10, 2),            -- ✅ تُقرأ من App.jsx SELECT
+
+    -- حقول متابعة Trailing/Break-even/Partial-TP لاستعادة الحالة بعد إعادة التشغيل
+    tp1_executed BOOLEAN DEFAULT FALSE,
+    trailing_active BOOLEAN DEFAULT FALSE,
+    trailing_stop DECIMAL(18, 8) DEFAULT 0,
+    breakeven_set BOOLEAN DEFAULT FALSE,
+    highest_price DECIMAL(18, 8),
+    lowest_price DECIMAL(18, 8),
+
+    opened_at TIMESTAMPTZ DEFAULT NOW(),
+    closed_at TIMESTAMPTZ
+);
+
+-- فهارس لتسريع الاستعلامات المتكررة فعلياً في الكود:
+-- state_manager.get_open_trades_from_db() → .eq("status","OPEN")
+CREATE INDEX IF NOT EXISTS idx_trades_status ON trades (status);
+-- App.jsx → .order("opened_at", {ascending:false}).limit(200)
+CREATE INDEX IF NOT EXISTS idx_trades_opened_at ON trades (opened_at DESC);
+-- main.py → فلترة الصفقات المفتوحة حسب الرمز في كل دورة
+CREATE INDEX IF NOT EXISTS idx_trades_symbol_status ON trades (symbol, status);
+
+-- ═══════════════════════════════════════════════════════════════════════
+-- ملاحظة أمنية (توصية، وليست خطأ برمجياً): لا توجد سياسات Row Level
+-- Security (RLS) معرَّفة هنا. إن كان مفتاح VITE_SUPABASE_ANON_KEY
+-- المُستخدَم في web/src/App.jsx مكشوفاً في حزمة الواجهة الأمامية (وهو
+-- كذلك بطبيعة تصميم Vite/متغيرات VITE_*)، فإن ترك RLS معطّلاً يعني أن أي
+-- شخص يملك هذا المفتاح العام يمكنه قراءة (وربما تعديل) جدولي trades
+-- وbot_state مباشرة من Supabase، متجاوزاً شاشة تسجيل الدخول في الواجهة.
+-- يُنصح بتفعيل ما يلي إن أردت حماية حقيقية على مستوى القاعدة:
+--
+-- ALTER TABLE trades ENABLE ROW LEVEL SECURITY;
+-- ALTER TABLE bot_state ENABLE ROW LEVEL SECURITY;
+-- CREATE POLICY "authenticated_read_trades" ON trades
+--     FOR SELECT USING (auth.role() = 'authenticated');
+-- CREATE POLICY "authenticated_read_bot_state" ON bot_state
+--     FOR SELECT USING (auth.role() = 'authenticated');
+-- (والسماح بالكتابة فقط عبر service_role key الذي يستخدمه البوت نفسه،
+--  لا عبر anon key المكشوف للواجهة).
+-- ═══════════════════════════════════════════════════════════════════════

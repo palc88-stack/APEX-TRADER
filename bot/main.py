@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import os
+import time  # ✅ إصلاح: كانت مستخدمة في handle_webhook_signal (time.time()) بدون استيراد → NameError مؤكّد عند تفعيل الشرط (order id فارغ و webhook_id فارغ)
 from datetime import datetime, timezone
 from typing import Dict, Any, Optional
 
@@ -164,24 +165,98 @@ class ApexTraderBot:
                     if pos_obj is None:
                         continue
 
+                    # ✅ إصلاح خلل حرج (مؤكَّد): pos_obj لم يكن يُسجَّل أبداً في
+                    # PositionManager._positions، لذا كانت update_price() ترجع
+                    # None دائماً لأي مركز مُستعاد من قاعدة البيانات — أي أن
+                    # وقف الخسارة/جني الأرباح الجزئي/Trailing Stop المُدار
+                    # داخلياً لم يكن يعمل إطلاقاً لأي صفقة قائمة بالفعل.
+                    if self.position_manager.get_position(pos_obj.id) is None:
+                        self.position_manager.add_position(pos_obj)
+
                     action = self.position_manager.update_price(
                         pos_obj.id, current_price
                     )
-                    if action and action.get("action") == "close":
+
+                    if action and action.get("action") == "partial_close":
+                        # ✅ إصلاح: partial_close لم تكن تُعالَج إطلاقاً من قبل —
+                        # كانت تُطلق من PositionManager وتُهمَل بصمت في main.py.
+                        pct = action.get("percentage", 50)
+                        logger.info(
+                            f"🎯 TP1 وصل لـ {symbol} — إغلاق جزئي مطلوب ({pct}%)"
+                        )
+                        try:
+                            partial_amount = (pos_obj.size_usd * pos_obj.leverage / current_price) * (pct / 100.0)
+                            await self.exchange.place_order(
+                                symbol=symbol,
+                                side=("sell" if pos_obj.direction.value == "LONG" else "buy"),
+                                amount=partial_amount,
+                                price=current_price,
+                                stop_loss=pos_obj.stop_loss,
+                                take_profit=pos_obj.take_profit_2,
+                            )
+                        except Exception as partial_err:
+                            logger.error(f"❌ فشل تنفيذ الإغلاق الجزئي (TP1) لـ {symbol}: {partial_err}")
+                        self.state_manager.save_trade_state({
+                            **pos,
+                            "tp1_executed": True,
+                        })
+                        await self.telegram.send_partial_close(
+                            pos_obj, current_price, pct,
+                            partial_pnl=(current_price - pos_obj.entry_price) * pos_obj.size_usd * pos_obj.leverage / pos_obj.entry_price
+                            if pos_obj.direction.value == "LONG" else
+                            (pos_obj.entry_price - current_price) * pos_obj.size_usd * pos_obj.leverage / pos_obj.entry_price,
+                        )
+
+                    elif action and action.get("action") == "close":
                         order = await self.exchange.close_position(
                             symbol=symbol,
                             position_id=pos_obj.id,
                             reason=action.get("reason", "unknown"),
                             price=current_price
                         )
+
+                        # ✅ إصلاح خلل حرج (مؤكَّد): close_position() في
+                        # PositionManager (الذي يحسب pnl الفعلي) لم يكن يُستدعى
+                        # أبداً — النتيجة: pnl محفوظ دائماً = 0 في القاعدة
+                        # وفي إشعار Telegram، و_daily_realized_pnl/_daily_loss_used
+                        # لا يتحدّثان أبداً، ما يجعل "حد الخسارة اليومي" مجرد رقم
+                        # عرض بلا أي تفعيل فعلي.
+                        closed_pos = self.position_manager.close_position(
+                            pos_obj.id, current_price, action.get("reason", "manual")
+                        )
+                        realized_pnl = closed_pos.pnl if closed_pos else 0.0
+
+                        self._daily_realized_pnl += realized_pnl
+                        if realized_pnl < 0:
+                            self._daily_loss_used += abs(realized_pnl)
+
                         self.state_manager.save_trade_state({
                             **pos,
                             "status": "CLOSED",
                             "exit_price": current_price,
                             "close_reason": action.get("reason"),
+                            "pnl": realized_pnl,
+                            "pnl_pct": closed_pos.pnl_pct if closed_pos else 0.0,
+                            # ✅ إصلاح: عمود "duration_minutes" مطلوب من App.jsx
+                            # ولم يكن يُحفَظ أبداً — Position.duration_minutes
+                            # موجودة كخاصية محسوبة لكنها لم تُصدَّر لقاعدة البيانات.
+                            "duration_minutes": round(closed_pos.duration_minutes, 2) if closed_pos else None,
                             "closed_at": datetime.now(timezone.utc).isoformat()
                         })
-                        await self.telegram.send_trade_closed(pos_obj, action.get("reason", ""))
+                        if closed_pos:
+                            closed_pos.pnl = realized_pnl
+                        await self.telegram.send_trade_closed(
+                            closed_pos or pos_obj, action.get("reason", "")
+                        )
+
+                # ✅ إصلاح خلل حرج (مؤكَّد): تفعيل فعلي لحد الخسارة اليومي —
+                # لم يكن موجوداً في أي مكان بالكود سابقاً رغم حساب الحد.
+                if self._daily_loss_used >= getattr(self, "_daily_loss_limit", float("inf")):
+                    logger.warning(
+                        f"🛑 تم بلوغ حد الخسارة اليومي ({self._daily_loss_used:.2f}$ / "
+                        f"{self._daily_loss_limit:.2f}$) — إيقاف فتح صفقات جديدة لبقية اليوم على {symbol}"
+                    )
+                    continue
 
                 # 3. توليد إشارة جديدة
                 df_with_indicators = self.indicators.calculate_all(candles)
@@ -251,6 +326,10 @@ class ApexTraderBot:
                     "id": order.get("id", ""),
                     "symbol": symbol,
                     "direction": str(action_val).upper(),
+                    # ✅ إصلاح: عمود "mode" مطلوب من App.jsx (لوحة المتابعة) في
+                    # استعلام SELECT الخاص بجدول trades ولم يكن يُحفَظ أبداً —
+                    # كان سيسبب فراغاً دائماً في هذا العمود بالواجهة.
+                    "mode": str(self.config.active_mode),
                     "exchange": self.config.exchange.primary_exchange(),
                     "entry_price": entry_price,
                     "stop_loss": stop_loss,
@@ -295,6 +374,14 @@ class ApexTraderBot:
         webhook_id = webhook_data.get("id", "")
 
         logger.info(f"📥 Webhook Signal: {symbol} {side} @ {price} (id={webhook_id})")
+
+        # ✅ إصلاح: تطبيق حد الخسارة اليومي أيضاً على إشارات الـ Webhook (كان
+        # مفعّلاً فقط نظرياً في process_market_cycle وحتى هناك لم يكن يُفعَّل).
+        if self._daily_loss_used >= getattr(self, "_daily_loss_limit", float("inf")):
+            logger.warning(
+                f"🛑 حد الخسارة اليومي مُستنفَد ({self._daily_loss_used:.2f}$) — تجاهل إشارة Webhook لـ {symbol}"
+            )
+            return
 
         # توحيد الاتجاه
         if side == "buy" or action in ("BUY", "LONG"):
@@ -386,6 +473,7 @@ class ApexTraderBot:
             "id": str(order.get("id", "") or webhook_id or f"web-{int(time.time())}"),
             "symbol": symbol,
             "direction": direction,
+            "mode": str(self.config.active_mode),
             "exchange": self.config.exchange.primary_exchange(),
             "entry_price": current_price,
             "stop_loss": stop_loss,

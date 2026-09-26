@@ -20,9 +20,16 @@ class RiskManager:
             # Config object — يقرأ من الـ nested RiskConfig
             risk_cfg = getattr(self.config, "risk", None)
             if risk_cfg is not None:
+                # ✅ إصلاح خلل حرج (مؤكَّد بالتنفيذ الفعلي): كان الكود القديم يقرأ
+                # max_daily_loss_pct (خسارة يومية إجمالية، مثال 4.0) ويستخدمها
+                # مباشرة كنسبة "مخاطرة الصفقة الواحدة" دون قسمتها على 100،
+                # فينتج max_allowed_loss = balance * 4.0 (أي 400% من الرصيد) —
+                # ما يجعل فحص "الخسارة المحتملة لكل صفقة" بلا أي تأثير عملياً.
+                # الإصلاح: نقرأ الحقل الصحيح max_risk_per_trade_pct ونحوّله
+                # من نسبة مئوية (مثال 2.0 = 2%) إلى كسر عشري (0.02).
                 self.max_risk_per_trade_pct = float(
-                    getattr(risk_cfg, "max_daily_loss_pct", 0.02)
-                )
+                    getattr(risk_cfg, "max_risk_per_trade_pct", 2.0)
+                ) / 100.0
                 self.max_leverage_allowed = int(
                     getattr(risk_cfg, "max_leverage", 20)
                 )

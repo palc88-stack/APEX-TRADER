@@ -132,6 +132,13 @@ class TelegramConfig:
 @dataclass
 class RiskConfig:
     max_daily_loss_pct: float = field(default_factory=lambda: _env_float("MAX_DAILY_LOSS_PCT", 4.0))
+    # ✅ إصلاح خلل حرج: كان RiskManager يقرأ خطأً max_daily_loss_pct هنا ليستخدمه
+    # كنسبة "أقصى خسارة مسموحة للصفقة الواحدة" — وهو خلط بين مفهومين مختلفين
+    # (خسارة يومية إجمالية ≠ خسارة الصفقة الواحدة)، إضافة لعدم تحويل النسبة
+    # المئوية (4.0) إلى كسر عشري (0.04)، ما جعل الفحص فعلياً بلا أي تأثير
+    # (max_allowed_loss = balance * 4.0 أي 400% من الرصيد!). تم تأكيد هذا
+    # عملياً بالتنفيذ الفعلي للكود.
+    max_risk_per_trade_pct: float = field(default_factory=lambda: _env_float("MAX_RISK_PER_TRADE_PCT", 2.0))
     max_leverage: int = field(default_factory=lambda: _env_int("MAX_LEVERAGE", 20))
     default_sl_pct: float = field(default_factory=lambda: _env_float("DEFAULT_SL_PCT", 1.5))
     tp1_pct: float = field(default_factory=lambda: _env_float("TP1_PCT", 1.0))
