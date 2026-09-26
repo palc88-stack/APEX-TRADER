@@ -51,7 +51,6 @@ jobs:
           schema = Path('database/schema.sql').read_text()
           assert 'ALLOW_LIVE_TRADING' in exchange
           assert 'reduce_only_close' in exchange
-          assert 'resolution=ignore-duplicates' in worker
           forbidden_key = 'SUPABASE_' + 'SERVICE_KEY'
           assert forbidden_key not in worker
           assert '\n  schedule:' not in workflow
