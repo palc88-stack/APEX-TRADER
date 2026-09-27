@@ -28,6 +28,13 @@ CREATE TABLE IF NOT EXISTS bot_state (
     -- الحالة
     is_running BOOLEAN DEFAULT FALSE,
     is_paused BOOLEAN DEFAULT FALSE,
+    bot_status VARCHAR(20) DEFAULT 'stopped',
+    environment VARCHAR(20) DEFAULT 'testnet',
+    heartbeat_at TIMESTAMPTZ,
+    cycle_completed_at TIMESTAMPTZ,
+    exchange_connected BOOLEAN,
+    database_connected BOOLEAN,
+    redis_connected BOOLEAN,
     daily_loss DECIMAL(10, 4) DEFAULT 0,
 
     -- الإحصاءات
@@ -36,6 +43,8 @@ CREATE TABLE IF NOT EXISTS bot_state (
 
     -- ✅ إضافة: المالية والوضع الحالي
     current_balance DECIMAL(10, 4) DEFAULT 0,
+    available_balance DECIMAL(10, 4),
+    daily_unrealized_pnl DECIMAL(10, 4),
     active_mode VARCHAR(20) DEFAULT 'HUNTER',
     active_symbols TEXT DEFAULT '[]',      -- JSON array
 
@@ -76,6 +85,24 @@ ALTER TABLE bot_state
     ADD COLUMN IF NOT EXISTS daily_loss_used_usd DECIMAL(10, 2) DEFAULT 0.00;
 ALTER TABLE bot_state
     ADD COLUMN IF NOT EXISTS daily_realized_pnl DECIMAL(10, 2) DEFAULT 0.00;
+ALTER TABLE bot_state
+    ADD COLUMN IF NOT EXISTS bot_status VARCHAR(20) DEFAULT 'stopped';
+ALTER TABLE bot_state
+    ADD COLUMN IF NOT EXISTS environment VARCHAR(20) DEFAULT 'testnet';
+ALTER TABLE bot_state
+    ADD COLUMN IF NOT EXISTS heartbeat_at TIMESTAMPTZ;
+ALTER TABLE bot_state
+    ADD COLUMN IF NOT EXISTS cycle_completed_at TIMESTAMPTZ;
+ALTER TABLE bot_state
+    ADD COLUMN IF NOT EXISTS exchange_connected BOOLEAN;
+ALTER TABLE bot_state
+    ADD COLUMN IF NOT EXISTS database_connected BOOLEAN;
+ALTER TABLE bot_state
+    ADD COLUMN IF NOT EXISTS redis_connected BOOLEAN;
+ALTER TABLE bot_state
+    ADD COLUMN IF NOT EXISTS available_balance DECIMAL(10, 4);
+ALTER TABLE bot_state
+    ADD COLUMN IF NOT EXISTS daily_unrealized_pnl DECIMAL(10, 4);
 
 -- ===== جدول pending_signals (للاستقبال من Cloudflare Worker) =====
 -- ✅ تم إصلاح "|--" → "--" (كانت هذه هي نقطة توقف تنفيذ السكربت بالكامل)

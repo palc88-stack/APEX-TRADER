@@ -135,6 +135,16 @@ function MetricCard({ title, value, detail, icon: Icon, tone = "" }) {
 }
 
 function ServiceRow({ title, value }) {
+  if (value === null || value === undefined) {
+    return (
+      <div className="service-row">
+        <i className="dot unknown" />
+        <span>{title}</span>
+        <b>غير مُبلّغ</b>
+      </div>
+    );
+  }
+
   const known = typeof value === "boolean";
 
   let statusText = "غير معروف";
@@ -360,7 +370,7 @@ function Dashboard() {
           <p className="eyebrow">نظرة عامة</p>
           <h1>حالة البوت والحساب</h1>
           <p className="muted">
-            آخر نبضة: {formatDate(status?.heartbeat_at)}
+            آخر نبضة: {formatDate(status?.heartbeat_at || status?.last_run_at)}
             {heartbeatAgeMinutes !== null &&
               ` · منذ ${heartbeatAgeMinutes} دقيقة`}
           </p>
@@ -372,7 +382,7 @@ function Dashboard() {
           }`}
         >
           <i />
-          {status?.bot_status || "غير معروف"}
+            {status?.bot_status || (status?.is_running ? "running" : "متوقف/غير مُبلّغ")}
         </span>
       </section>
 
@@ -393,9 +403,9 @@ function Dashboard() {
         <MetricCard
           title="الرصيد المتاح"
           value={
-            status?.available_balance == null
+            (status?.available_balance ?? status?.current_balance) == null
               ? "—"
-              : `$${formatMoney(status.available_balance)}`
+              : `$${formatMoney(status.available_balance ?? status.current_balance)}`
           }
           detail="USDT · آخر قيمة أبلغ بها البوت"
           icon={Wallet}
@@ -420,7 +430,7 @@ function Dashboard() {
           value={
             status?.daily_unrealized_pnl == null
               ? "—"
-              : `$${formatMoney(status.daily_unrealized_pnl)}`
+              : `$${formatMoney(status?.daily_unrealized_pnl)}`
           }
           detail="للمراكز المفتوحة حسب آخر مزامنة"
           icon={Activity}

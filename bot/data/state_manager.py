@@ -77,8 +77,12 @@ class StateManager:
             self.client.table("bot_state").upsert({
                 "id": 1,
                 "is_running": True,
+                "bot_status": "running",
+                "environment": str(getattr(self.config, "environment", "testnet")),
+                "heartbeat_at": now_utc,
                 "last_run_at": now_utc,
                 "updated_at": now_utc,
+                "database_connected": True,
             }).execute()
             logger.info("💓 Heartbeat مُكتوبة: {} | is_running=true", now_utc)
         except Exception as e:
@@ -103,6 +107,8 @@ class StateManager:
             }
             if balance is not None:
                 updates["current_balance"] = round(balance, 2)
+                updates["available_balance"] = round(balance, 2)
+                updates["exchange_connected"] = True
             if daily_loss_used is not None:
                 updates["daily_loss_used_usd"] = round(daily_loss_used, 2)
             if daily_realized_pnl is not None:
@@ -120,6 +126,21 @@ class StateManager:
         except Exception as e:
             logger.error("❌ update_bot_status: {}", e)
 
+    async def mark_cycle_completed(self) -> None:
+        """سجل دورة مكتملة فقط بعد نجاح كل عمليات الدورة."""
+        if not self.client:
+            return
+        try:
+            now_utc = datetime.now(timezone.utc).isoformat()
+            self.client.table("bot_state").upsert({
+                "id": 1,
+                "cycle_completed_at": now_utc,
+                "updated_at": now_utc,
+                "database_connected": True,
+            }).execute()
+        except Exception as e:
+            logger.error("❌ mark_cycle_completed: {}", e)
+
     async def mark_bot_stopped(self) -> None:
         """تسجيل إيقاف البوت في قاعدة البيانات."""
         if not self.client:
@@ -130,6 +151,7 @@ class StateManager:
             self.client.table("bot_state").upsert({
                 "id": 1,
                 "is_running": False,
+                "bot_status": "stopped",
                 "updated_at": now_utc
             }).execute()
             logger.info("🛑 Bot marked as stopped in DB")

@@ -360,6 +360,7 @@ class ApexTraderBot:
             while True:
                 await self.process_market_cycle()
                 cycles_done += 1
+                await self.state_manager.mark_cycle_completed()
                 if single_cycle and cycles_done >= max_cycles:
                     logger.info(f"✅ اكتمل {max_cycles} دورة(ات) — خروج من APEX_RUN_CYCLES={max_cycles}")
                     break
