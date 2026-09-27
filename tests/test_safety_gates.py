@@ -46,6 +46,42 @@ def test_worker_has_no_service_key_fallback():
     assert "WEBHOOK_SECRET" not in worker
 
 
+@pytest.mark.asyncio
+async def test_binance_protection_uses_algo_order_api():
+    class FakeExchange:
+        def __init__(self):
+            self.calls = []
+
+        def market(self, symbol):
+            assert symbol == "BTC/USDT"
+            return {"id": "BTCUSDT"}
+
+        def milliseconds(self):
+            return 1700000000000
+
+        async def request(self, path, api, method, params):
+            self.calls.append((path, api, method, params))
+            return {"algoId": len(self.calls)}
+
+    manager = object.__new__(ExchangeManager)
+    manager._exchange = FakeExchange()
+    manager._markets_loaded = True
+
+    ids = await manager._create_protection("BTC/USDT", "sell", 0.01, 90000, 80000)
+
+    assert ids == {"1", "2"}
+    assert [call[0:3] for call in manager._exchange.calls] == [
+        ("algoOrder", "fapiPrivate", "POST"),
+        ("algoOrder", "fapiPrivate", "POST"),
+    ]
+    for _, _, _, params in manager._exchange.calls:
+        assert params["algoType"] == "CONDITIONAL"
+        assert params["symbol"] == "BTCUSDT"
+        assert params["reduceOnly"] == "true"
+        assert params["type"] in {"STOP_MARKET", "TAKE_PROFIT_MARKET"}
+        assert "triggerPrice" in params
+
+
 def test_workflow_has_no_schedule_or_live_secret():
     workflow = (ROOT / ".github/workflows/binance.yml").read_text()
     assert "\n  schedule:" not in workflow

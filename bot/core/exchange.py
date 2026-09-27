@@ -139,20 +139,31 @@ class ExchangeManager:
         await exchange.set_leverage(leverage, symbol)
 
     async def _create_protection(self, symbol: str, side: str, amount: float, stop_loss: float, take_profit: float) -> set[str]:
+        """Create Binance USD-M conditional protection through Algo Orders."""
         exchange = await self._ensure_ready()
         close_side = "sell" if side == "buy" else "buy"
+        market_id = str(exchange.market(symbol)["id"])
         ids: set[str] = set()
-        for order_type, stop_price in (("stop_market", stop_loss), ("take_profit_market", take_profit)):
-            order = await exchange.create_order(
-                symbol=symbol,
-                type=order_type,
-                side=close_side,
-                amount=amount,
-                params={"stopPrice": stop_price, "reduceOnly": True},
-            )
-            order_id = str(order.get("id", ""))
+        for order_type, trigger_price, label in (
+            ("STOP_MARKET", stop_loss, "sl"),
+            ("TAKE_PROFIT_MARKET", take_profit, "tp"),
+        ):
+            params = {
+                "algoType": "CONDITIONAL",
+                "symbol": market_id,
+                "side": close_side.upper(),
+                "type": order_type,
+                "quantity": amount,
+                "triggerPrice": trigger_price,
+                "workingType": "CONTRACT_PRICE",
+                "reduceOnly": "true",
+                "clientAlgoId": f"apex-{label}-{int(exchange.milliseconds())}"[:36],
+                "newOrderRespType": "ACK",
+            }
+            order = await exchange.request("algoOrder", "fapiPrivate", "POST", params)
+            order_id = str(order.get("algoId") or order.get("orderId") or "")
             if not order_id:
-                raise ExchangeSafetyError(f"{order_type} returned no order id")
+                raise ExchangeSafetyError(f"{order_type} returned no algo id")
             ids.add(order_id)
         return ids
 
@@ -188,11 +199,18 @@ class ExchangeManager:
         try:
             protections = await self._create_protection(symbol, side.lower(), amount, stop_loss, take_profit)
         except Exception as protection_error:
-            logger.critical("Protection setup failed for %s: %s", symbol, protection_error)
+            logger.critical(f"Protection setup failed for {symbol}: {protection_error}")
             try:
                 await self.reduce_only_close(symbol=symbol, amount=amount, reason="protection_failed")
+                positions = await exchange.fetch_positions([symbol])
+                remaining = next(
+                    (p for p in positions if p.get("symbol") == symbol and abs(float(p.get("contracts") or 0)) > 0),
+                    None,
+                )
+                if remaining is not None:
+                    raise ExchangeSafetyError("rollback left an open position")
             except Exception as rollback_error:
-                logger.critical("Emergency close failed for %s: %s", symbol, rollback_error)
+                logger.critical(f"Emergency close failed for {symbol}: {rollback_error}")
             raise ExchangeSafetyError("entry was not accepted as protected") from protection_error
 
         self._open_protection_orders[entry_id] = protections
@@ -216,20 +234,26 @@ class ExchangeManager:
         return order or {}
 
     async def _cancel_protection_orders(self, symbol: str) -> None:
+        """Cancel active Binance Algo Orders before closing a position."""
         exchange = await self._ensure_ready()
+        market_id = str(exchange.market(symbol)["id"])
         try:
-            open_orders = await exchange.fetch_open_orders(symbol)
+            algo_orders = await exchange.request(
+                "openAlgoOrders", "fapiPrivate", "GET", {"symbol": market_id}
+            )
         except Exception as exc:
-            logger.warning("Unable to list open protection orders for {}: {}", symbol, exc)
-            return
-        for order in open_orders:
-            if order.get("reduceOnly") or order.get("type") in {"stop_market", "take_profit_market"}:
-                order_id = order.get("id")
-                if order_id:
-                    try:
-                        await exchange.cancel_order(order_id, symbol)
-                    except Exception as exc:
-                        logger.warning("Unable to cancel order {}: {}", order_id, exc)
+            logger.warning("Unable to list Binance algo orders for {}: {}", symbol, exc)
+            algo_orders = []
+        for order in algo_orders or []:
+            algo_id = order.get("algoId")
+            if algo_id:
+                try:
+                    await exchange.request(
+                        "algoOrder", "fapiPrivate", "DELETE",
+                        {"symbol": market_id, "algoId": algo_id},
+                    )
+                except Exception as exc:
+                    logger.warning("Unable to cancel algo order {} for {}: {}", algo_id, symbol, exc)
 
     async def close_position(self, symbol: str, position_id: str, reason: str, price: float) -> Dict[str, Any]:
         exchange = await self._ensure_ready()

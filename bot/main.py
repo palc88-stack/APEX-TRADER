@@ -109,6 +109,7 @@ class ApexTraderBot:
     async def process_market_cycle(self) -> None:
         logger.info(f"Market cycle: {datetime.now(timezone.utc).isoformat()}")
 
+        cycle_errors: list[str] = []
         for symbol in self.config.trading.symbols:
             try:
                 # 1. جلب البيانات
@@ -327,7 +328,11 @@ class ApexTraderBot:
 
             except Exception as e:
                 logger.error(f"❌ خطأ في {symbol}: {e}", exc_info=True)
+                cycle_errors.append(f"{symbol}: {type(e).__name__}: {e}")
                 await self.telegram.send_error(f"Cycle Error [{symbol}]: {str(e)}")
+
+        if cycle_errors:
+            raise RuntimeError("market cycle failed: " + " | ".join(cycle_errors))
 
     def _calculate_position_size(self) -> float:
         """حساب حجم الصفقة بناءً على الرصيد وإعدادات المخاطر."""
