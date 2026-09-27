@@ -410,7 +410,8 @@ if __name__ == "__main__":
         _logger.info("🚀 بدء تشغيل APEX TRADER...")
         bot = ApexTraderBot()
         try:
-            await bot.run_forever(interval_seconds=60)
+            interval_seconds = int(os.getenv("APEX_CYCLE_INTERVAL_SECONDS", "60"))
+            await bot.run_forever(interval_seconds=interval_seconds)
         except KeyboardInterrupt:
             _logger.info("⛔ توقف يدوياً")
         except Exception as e:

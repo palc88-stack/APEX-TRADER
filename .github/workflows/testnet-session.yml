@@ -1,0 +1,78 @@
+name: Binance Testnet Session
+
+on:
+  workflow_dispatch:
+    inputs:
+      cycles:
+        description: "عدد دورات polling"
+        required: false
+        default: "12"
+        type: string
+      interval_seconds:
+        description: "الفاصل بين الدورات بالثواني؛ 300 = إطار 5m"
+        required: false
+        default: "300"
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: apex-testnet-session
+  cancel-in-progress: true
+
+jobs:
+  testnet:
+    name: Binance Testnet polling session
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    env:
+      PYTHONPATH: ${{ github.workspace }}
+      ENVIRONMENT: testnet
+      PRIMARY_EXCHANGE: binance
+      BINANCE_TESTNET: "true"
+      ALLOW_LIVE_TRADING: "false"
+      APEX_RUN_CYCLES: ${{ inputs.cycles }}
+      APEX_CYCLE_INTERVAL_SECONDS: ${{ inputs.interval_seconds }}
+      TRADING_SYMBOLS: BTC/USDT
+      TRADING_TIMEFRAME: 5m
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_WRITE_KEY: ${{ secrets.SUPABASE_WRITE_KEY }}
+      BINANCE_API_KEY: ${{ secrets.BINANCE_API_KEY }}
+      BINANCE_SECRET_KEY: ${{ secrets.BINANCE_SECRET_KEY }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: python -m pip install --disable-pip-version-check -r requirements.txt
+
+      - name: Validate Testnet gates and secrets
+        shell: bash
+        run: |
+          test "$BINANCE_TESTNET" = "true"
+          test "$ALLOW_LIVE_TRADING" = "false"
+          test "$PRIMARY_EXCHANGE" = "binance"
+          test -n "$BINANCE_API_KEY"
+          test -n "$BINANCE_SECRET_KEY"
+          test -n "$SUPABASE_URL"
+          test -n "$SUPABASE_WRITE_KEY"
+          echo "Testnet gates and required secrets are present."
+
+      - name: Compile and run focused tests
+        run: |
+          python -m compileall -q bot tests
+          python -m pytest -q tests/test_exchange_config.py tests/test_full_system.py tests/test_safety_gates.py --timeout=30
+
+      - name: Run bounded Binance Testnet polling session
+        run: python -m bot.main
