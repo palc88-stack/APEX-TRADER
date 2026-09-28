@@ -18,6 +18,7 @@ class StateManager:
 
     def __init__(self, config: Optional[Any] = None):
         self.config = config
+        self.initial_bot_state: Dict[str, Any] = {}
 
         supabase_url = (
             getattr(getattr(config, "database", None), "supabase_url", None)
@@ -56,6 +57,8 @@ class StateManager:
         if not self.client:
             return
         try:
+            state_result = self.client.table("bot_state").select("*").eq("id", 1).maybe_single().execute()
+            self.initial_bot_state = dict(getattr(state_result, "data", None) or {})
             open_trades = self.get_open_trades_from_db()
             logger.info(
                 "✅ تم استعادة {} صفقة مفتوحة من قاعدة البيانات.",
@@ -94,6 +97,7 @@ class StateManager:
         daily_loss_used: Optional[float] = None,
         daily_realized_pnl: Optional[float] = None,
         daily_loss_limit: Optional[float] = None,
+        risk_day: Optional[str] = None,
     ) -> None:
         """
         تحديث الحالة المالية للبوت — يُستخدم من main.py.
@@ -115,6 +119,8 @@ class StateManager:
                 updates["daily_realized_pnl"] = round(daily_realized_pnl, 2)
             if daily_loss_limit is not None:
                 updates["daily_loss_limit_usd"] = round(daily_loss_limit, 2)
+            if risk_day is not None:
+                updates["risk_day"] = risk_day
             # ✅ استخدام upsert بدلاً من update — يضمن وجود الصف
             self.client.table("bot_state").upsert(updates).execute()
             logger.info(

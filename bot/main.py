@@ -46,6 +46,7 @@ class ApexTraderBot:
         # ✅ تتبع الحالة المالية اليومية
         self._daily_loss_used = 0.0
         self._daily_realized_pnl = 0.0
+        self._risk_day = datetime.now(timezone.utc).date().isoformat()
         self._current_balance = 0.0
         self._reconciliation_blocked_symbols: set[str] = set()
 
@@ -70,6 +71,7 @@ class ApexTraderBot:
                         daily_loss_used=self._daily_loss_used,
                         daily_realized_pnl=self._daily_realized_pnl,
                         daily_loss_limit=self._daily_loss_limit,
+                        risk_day=self._risk_day,
                     )
                 except Exception as e:
                     logger.debug(f"⚠️ لا يمكن جلب الرصيد للـ heartbeat: {e}")
@@ -80,6 +82,17 @@ class ApexTraderBot:
     async def initialize(self) -> None:
         logger.info("Initializing ApexTrader...")
         await self.state_manager.load_initial_state()
+        stored_day = str(self.state_manager.initial_bot_state.get("risk_day") or "")
+        if stored_day == self._risk_day:
+            self._daily_loss_used = float(
+                self.state_manager.initial_bot_state.get("daily_loss_used_usd") or 0.0
+            )
+            self._daily_realized_pnl = float(
+                self.state_manager.initial_bot_state.get("daily_realized_pnl") or 0.0
+            )
+        else:
+            self._daily_loss_used = 0.0
+            self._daily_realized_pnl = 0.0
         await self._reconcile_before_trading()
 
         # ✅ فحص اتصال Supabase - إذا فشل، نكتب في واجهة مستقلة
@@ -98,6 +111,7 @@ class ApexTraderBot:
             daily_loss_used=self._daily_loss_used,
             daily_realized_pnl=self._daily_realized_pnl,
             daily_loss_limit=self._daily_loss_limit,
+            risk_day=self._risk_day,
         )
 
         if self.state_manager.client is None:

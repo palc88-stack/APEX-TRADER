@@ -56,6 +56,7 @@ CREATE TABLE IF NOT EXISTS bot_state (
     daily_loss_limit_usd DECIMAL(10, 2) DEFAULT 100.00,
     daily_loss_used_usd DECIMAL(10, 2) DEFAULT 0.00,
     daily_realized_pnl DECIMAL(10, 2) DEFAULT 0.00,
+    risk_day DATE,
 
     -- التوقيت
     last_run_at TIMESTAMPTZ,
@@ -85,6 +86,8 @@ ALTER TABLE bot_state
     ADD COLUMN IF NOT EXISTS daily_loss_used_usd DECIMAL(10, 2) DEFAULT 0.00;
 ALTER TABLE bot_state
     ADD COLUMN IF NOT EXISTS daily_realized_pnl DECIMAL(10, 2) DEFAULT 0.00;
+ALTER TABLE bot_state
+    ADD COLUMN IF NOT EXISTS risk_day DATE;
 ALTER TABLE bot_state
     ADD COLUMN IF NOT EXISTS bot_status VARCHAR(20) DEFAULT 'stopped';
 ALTER TABLE bot_state
