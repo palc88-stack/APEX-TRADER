@@ -116,6 +116,12 @@ class ApexTraderBot:
                 self.state_manager.bind_position_slot(reservation_id, trade_id)
         await self.universe_manager.refresh_if_due(force=True)
 
+        if self.config.universe_refresh_only:
+            logger.info(
+                "✅ Universe refresh-only mode completed; no balance check, signal evaluation, or order path will run"
+            )
+            return
+
         # ✅ فحص اتصال Supabase - إذا فشل، نكتب في واجهة مستقلة
         balance = await self.exchange.get_balance()
         if balance <= 0:
@@ -604,6 +610,9 @@ class ApexTraderBot:
         single_cycle = max_cycles > 0
 
         await self.initialize()
+        if self.config.universe_refresh_only:
+            logger.info("✅ Exiting after Universe refresh-only run")
+            return
         heartbeat_task = asyncio.create_task(
             self.start_heartbeat_loop(interval_seconds=10)
         )

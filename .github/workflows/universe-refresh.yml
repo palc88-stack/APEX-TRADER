@@ -1,0 +1,64 @@
+name: APEX Universe Refresh
+
+on:
+  schedule:
+    - cron: "0 */4 * * *"
+  workflow_dispatch: {}
+
+concurrency:
+  group: apex-universe-refresh
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  refresh:
+    name: Refresh Binance liquidity universe
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      PYTHONPATH: ${{ github.workspace }}
+      ENVIRONMENT: testnet
+      PRIMARY_EXCHANGE: binance
+      BINANCE_TESTNET: "true"
+      ALLOW_LIVE_TRADING: "false"
+      TRADING_EXECUTION_ENABLED: "false"
+      ALLOW_NEW_ENTRIES: "false"
+      UNIVERSE_REFRESH_ONLY: "true"
+      UNIVERSE_SIZE: "20"
+      UNIVERSE_REFRESH_HOURS: "4"
+      MAX_OPEN_POSITIONS: "3"
+      APEX_RUN_CYCLES: "1"
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_WRITE_KEY: ${{ secrets.SUPABASE_WRITE_KEY }}
+      BINANCE_API_KEY: ${{ secrets.BINANCE_API_KEY }}
+      BINANCE_SECRET_KEY: ${{ secrets.BINANCE_SECRET_KEY }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - name: Install dependencies
+        run: python -m pip install --disable-pip-version-check -r requirements.txt
+      - name: Validate refresh-only safety gates
+        run: |
+          test "$BINANCE_TESTNET" = "true"
+          test "$ALLOW_LIVE_TRADING" = "false"
+          test "$TRADING_EXECUTION_ENABLED" = "false"
+          test "$ALLOW_NEW_ENTRIES" = "false"
+          test "$UNIVERSE_REFRESH_ONLY" = "true"
+          test -n "$SUPABASE_URL"
+          test -n "$SUPABASE_WRITE_KEY"
+          test -n "$BINANCE_API_KEY"
+          test -n "$BINANCE_SECRET_KEY"
+      - name: Compile and run refresh-only tests
+        run: |
+          python -m compileall -q bot tests
+          python -m pytest -q tests/test_universe_and_slots.py tests/test_strategy_router.py --timeout=30
+      - name: Refresh Universe only
+        run: python -m bot.main
