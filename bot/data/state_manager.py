@@ -1,4 +1,5 @@
 # bot/data/state_manager.py - الكود المُصحَّح (كامل)
+import json
 import os
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -275,3 +276,101 @@ class StateManager:
                 trade_dict.get("id"), e
             )
             return None
+
+    # ─── Dynamic universe ──────────────────────────────────────────────────────
+
+    def get_active_universe_symbols(self) -> List[Dict[str, Any]]:
+        """Read the currently activated universe; a failed read is fail-closed."""
+        if not self.client:
+            return []
+        try:
+            result = (
+                self.client.table("universe_symbols")
+                .select("symbol,rank,expires_at,snapshot_id")
+                .eq("is_active", True)
+                .order("rank")
+                .limit(100)
+                .execute()
+            )
+            return list(result.data or [])
+        except Exception as exc:
+            logger.error("❌ get_active_universe_symbols: {}", exc)
+            return []
+
+    def replace_universe_snapshot(
+        self, snapshot_id: str, rows: List[Dict[str, Any]], expires_at: str
+    ) -> bool:
+        """Insert a complete snapshot, then atomically activate it through RPC."""
+        if not self.client:
+            raise RuntimeError("Supabase client is unavailable; universe persistence failed closed")
+        try:
+            self.client.table("universe_snapshots").insert({
+                "id": snapshot_id,
+                "expires_at": expires_at,
+                "source": "binance_usdm",
+            }).execute()
+            self.client.table("universe_symbols").insert(rows).execute()
+            self.client.rpc("activate_universe_snapshot", {
+                "p_snapshot_id": snapshot_id,
+            }).execute()
+            self.client.table("bot_state").upsert({
+                "id": 1,
+                "active_symbols": json.dumps([row["symbol"] for row in rows]),
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }).execute()
+            return True
+        except Exception as exc:
+            logger.error("❌ replace_universe_snapshot: {}", exc)
+            raise RuntimeError("universe snapshot activation failed") from exc
+
+    # ─── Global position slots ────────────────────────────────────────────────
+
+    def try_reserve_position_slot(
+        self, symbol: str, owner: str, reservation_id: str, max_slots: int = 3
+    ) -> Optional[Dict[str, Any]]:
+        """Atomically reserve one global slot; idempotent for the same symbol."""
+        if not self.client:
+            logger.error("❌ Cannot reserve position slot without Supabase")
+            return None
+        try:
+            result = self.client.rpc("reserve_position_slot", {
+                "p_symbol": symbol,
+                "p_owner": owner,
+                "p_reservation_id": reservation_id,
+                "p_max_slots": int(max_slots),
+            }).execute()
+            data = getattr(result, "data", None) or []
+            return dict(data[0]) if data else None
+        except Exception as exc:
+            logger.error("❌ try_reserve_position_slot {}: {}", symbol, exc)
+            return None
+
+    def bind_position_slot(self, reservation_id: str, trade_id: str) -> bool:
+        if not self.client:
+            return False
+        try:
+            result = self.client.rpc("bind_position_slot", {
+                "p_reservation_id": reservation_id,
+                "p_trade_id": trade_id,
+            }).execute()
+            return bool(getattr(result, "data", None))
+        except Exception as exc:
+            logger.error("❌ bind_position_slot: {}", exc)
+            return False
+
+    def release_position_slot(
+        self, *, symbol: Optional[str] = None, trade_id: Optional[str] = None,
+        reservation_id: Optional[str] = None,
+    ) -> bool:
+        if not self.client:
+            return False
+        try:
+            result = self.client.rpc("release_position_slot", {
+                "p_symbol": symbol,
+                "p_trade_id": trade_id,
+                "p_reservation_id": reservation_id,
+            }).execute()
+            return bool(getattr(result, "data", None))
+        except Exception as exc:
+            logger.error("❌ release_position_slot: {}", exc)
+            return False

@@ -143,6 +143,45 @@ class ExchangeManager:
                 "source": FieldSource.UNCONFIRMED.value,
             }
 
+    async def fetch_liquid_symbols(self, limit: int = 20, quote: str = "USDT") -> list[Dict[str, Any]]:
+        """Return active linear futures symbols ranked by real 24h quote volume."""
+        exchange = await self._ensure_ready()
+        tickers = await exchange.fetch_tickers()
+        quote = quote.upper()
+        excluded_bases = {"USDT", "USDC", "BUSD", "FDUSD", "TUSD", "DAI", "USDP"}
+        candidates: list[Dict[str, Any]] = []
+        for symbol, market in exchange.markets.items():
+            if not market.get("active", True) or not market.get("contract", False):
+                continue
+            if not market.get("linear", False) or str(market.get("quote", "")).upper() != quote:
+                continue
+            base = str(market.get("base", "")).upper()
+            if base in excluded_bases:
+                continue
+            ticker = tickers.get(symbol) or {}
+            info = ticker.get("info") or {}
+            try:
+                quote_volume = float(ticker.get("quoteVolume") or info.get("quoteVolume") or 0.0)
+                last = float(ticker.get("last") or 0.0)
+                bid = float(ticker.get("bid") or 0.0)
+                ask = float(ticker.get("ask") or 0.0)
+            except (TypeError, ValueError):
+                continue
+            if quote_volume <= 0 or last <= 0:
+                continue
+            mid = (bid + ask) / 2.0 if bid > 0 and ask > 0 else last
+            spread_bps = ((ask - bid) / mid * 10000.0) if bid > 0 and ask >= bid else 0.0
+            if spread_bps > 50.0:
+                continue
+            candidates.append({
+                "symbol": symbol,
+                "quote_volume_24h": quote_volume,
+                "spread_bps": spread_bps,
+                "liquidity_score": quote_volume / (1.0 + spread_bps / 10.0),
+            })
+        candidates.sort(key=lambda row: row["liquidity_score"], reverse=True)
+        return candidates[: max(1, int(limit))]
+
     async def fetch_fill_details(self, order_id: str, symbol: str) -> FillDetails:
         """Resolve execution facts without substituting ticker prices."""
         exchange = await self._ensure_ready()

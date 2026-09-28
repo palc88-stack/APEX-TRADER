@@ -4,6 +4,7 @@ import asyncio
 import logging
 import os
 import time
+import uuid
 from datetime import datetime, timezone
 
 
@@ -19,6 +20,7 @@ from bot.core.risk_manager import RiskManager
 from bot.core.fee_calculator import FeeCalculator
 from bot.core.position_manager import PositionManager
 from bot.data.state_manager import StateManager
+from bot.data.universe_manager import UniverseManager
 from bot.notifications.telegram_notifier import TelegramNotifier
 
 logger = logging.getLogger("ApexTrader.Main")
@@ -42,6 +44,9 @@ class ApexTraderBot:
         self.position_manager = PositionManager()
 
         self.state_manager = StateManager(self.config)
+        self.universe_manager = UniverseManager(
+            self.exchange, self.state_manager, self.config
+        )
         self.telegram = TelegramNotifier()
         # ✅ تتبع الحالة المالية اليومية
         self._daily_loss_used = 0.0
@@ -49,6 +54,7 @@ class ApexTraderBot:
         self._risk_day = datetime.now(timezone.utc).date().isoformat()
         self._current_balance = 0.0
         self._reconciliation_blocked_symbols: set[str] = set()
+        self._slot_owner = f"apex-{os.getpid()}-{uuid.uuid4().hex[:12]}"
 
     # ✅ إصلاح: Heartbeat عبر StateManager
     async def start_heartbeat_loop(self, interval_seconds: int = 10):
@@ -94,6 +100,21 @@ class ApexTraderBot:
             self._daily_loss_used = 0.0
             self._daily_realized_pnl = 0.0
         await self._reconcile_before_trading()
+        for trade in self.state_manager.get_open_trades_from_db():
+            if trade.get("status") != "OPEN" or not trade.get("symbol"):
+                continue
+            slot = self.state_manager.try_reserve_position_slot(
+                str(trade["symbol"]), self._slot_owner,
+                str(trade.get("entry_order_id") or trade.get("id")),
+                max_slots=self.config.trading.max_open_positions,
+            )
+            if not slot:
+                raise RuntimeError("open positions exceed the global position-slot limit")
+            reservation_id = str(slot.get("reservation_id") or "")
+            trade_id = str(trade.get("entry_order_id") or trade.get("id") or "")
+            if reservation_id and trade_id and not slot.get("trade_id"):
+                self.state_manager.bind_position_slot(reservation_id, trade_id)
+        await self.universe_manager.refresh_if_due(force=True)
 
         # ✅ فحص اتصال Supabase - إذا فشل، نكتب في واجهة مستقلة
         balance = await self.exchange.get_balance()
@@ -162,7 +183,17 @@ class ApexTraderBot:
         logger.info(f"Market cycle: {datetime.now(timezone.utc).isoformat()}")
 
         cycle_errors: list[str] = []
-        for symbol in self.config.trading.symbols:
+        await self.universe_manager.refresh_if_due()
+        all_open_positions = self.state_manager.get_open_trades_from_db()
+        open_symbols = [
+            str(position.get("symbol")) for position in all_open_positions
+            if position.get("symbol")
+        ]
+        cycle_symbols = self.universe_manager.get_symbols_for_cycle(open_symbols)
+        entries_started = 0
+        for symbol in cycle_symbols:
+            slot_reservation_id: str | None = None
+            order_submitted = False
             try:
                 # 1. جلب البيانات
                 if symbol in self._reconciliation_blocked_symbols:
@@ -181,7 +212,7 @@ class ApexTraderBot:
                     continue
 
                 # 2. إدارة المراكز المفتوحة
-                open_positions = self.state_manager.get_open_trades_from_db()
+                open_positions = all_open_positions
                 symbol_positions = [
                     p for p in open_positions
                     if p.get("symbol") == symbol and p.get("status") == "OPEN"
@@ -350,6 +381,9 @@ class ApexTraderBot:
                         await self.telegram.send_trade_closed(
                             closed_pos or pos_obj, action.get("reason", "")
                         )
+                        self.state_manager.release_position_slot(
+                            trade_id=str(pos.get("entry_order_id") or pos_obj.id)
+                        )
 
                 # ✅ إصلاح خلل حرج (مؤكَّد): تفعيل فعلي لحد الخسارة اليومي —
                 # لم يكن موجوداً في أي مكان بالكود سابقاً رغم حساب الحد.
@@ -414,6 +448,24 @@ class ApexTraderBot:
                 ):
                     continue
 
+                if entries_started >= self.config.trading.max_new_entries_per_cycle:
+                    logger.info(
+                        "Skipping new entry for %s: per-cycle entry limit reached",
+                        symbol,
+                    )
+                    continue
+
+                slot_reservation_id = f"{self._slot_owner}-{uuid.uuid4().hex}"
+                slot = self.state_manager.try_reserve_position_slot(
+                    symbol,
+                    self._slot_owner,
+                    slot_reservation_id,
+                    max_slots=self.config.trading.max_open_positions,
+                )
+                if not slot:
+                    logger.info("Skipping %s: all global position slots are occupied", symbol)
+                    continue
+
                 # size_usd is margin; the exchange order uses the leveraged notional.
                 notional_usd = size_usd * leverage
                 order_amount = notional_usd / entry_price
@@ -431,8 +483,14 @@ class ApexTraderBot:
                     take_profit_2=take_profit_2,
                     tp1_fraction=0.5,
                 )
+                order_submitted = True
+                entries_started += 1
 
                 entry_order_id = str(order.get("id") or "")
+                if entry_order_id:
+                    self.state_manager.bind_position_slot(
+                        slot_reservation_id, entry_order_id
+                    )
                 entry_fill = (
                     await self.exchange.fetch_fill_details(entry_order_id, symbol)
                     if entry_order_id else None
@@ -518,6 +576,10 @@ class ApexTraderBot:
                 logger.info(f"✅ صفقة جديدة: {symbol} {side} @ {entry_price}")
 
             except Exception as e:
+                if slot_reservation_id and not order_submitted:
+                    self.state_manager.release_position_slot(
+                        reservation_id=slot_reservation_id
+                    )
                 logger.error(f"❌ خطأ في {symbol}: {e}", exc_info=True)
                 cycle_errors.append(f"{symbol}: {type(e).__name__}: {e}")
                 await self.telegram.send_error(f"Cycle Error [{symbol}]: {str(e)}")
