@@ -78,7 +78,7 @@ class SignalEngine:
         cfg_dict = config.__dict__ if hasattr(config, "__dict__") else {}
         self.active_mode = str(getattr(config, "active_mode", "HUNTER")).upper()
         self.indicator_calculator = IndicatorCalculator(cfg_dict)
-        self.signal_filters = SignalFilters(cfg_dict)
+        self.signal_filters = SignalFilters(getattr(config, "risk", cfg_dict))
         # ✅ ربط الـ strategies الآن داخل المحرك
         self.explosion_detector = ExplosionDetector()
         self.scalping_strategy = ScalpingStrategy(config)

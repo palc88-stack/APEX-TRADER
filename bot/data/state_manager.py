@@ -199,7 +199,7 @@ class StateManager:
     def get_open_trades_from_db(self) -> List[Dict[str, Any]]:
         """استرجاع OPEN وNEEDS_RECONCILIATION معاً للمراجعة الآمنة."""
         if not self.client:
-            return []
+            raise RuntimeError("Supabase client is unavailable; state read failed closed")
         try:
             res = (
                 self.client.table("trades")
@@ -210,7 +210,7 @@ class StateManager:
             return res.data if res and hasattr(res, "data") else []
         except Exception as e:
             logger.error("❌ get_open_trades_from_db: {}", e)
-            return []
+            raise RuntimeError("Supabase open-trades query failed") from e
 
     def reconstruct_position(
         self, trade_dict: Dict[str, Any]

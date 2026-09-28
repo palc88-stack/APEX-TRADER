@@ -21,14 +21,28 @@ class SignalFilters:
             self.min_rsi_sell = 58.0
             self.min_volume_ratio = 0.5
         elif isinstance(config, dict):
-            self.max_rsi_buy = float(config.get("max_rsi_buy", 42.0))
-            self.min_rsi_sell = float(config.get("min_rsi_sell", 58.0))
-            self.min_volume_ratio = float(config.get("min_volume_ratio", 0.5))
+            risk = config.get("risk")
+            source = risk if risk is not None else config
+            self.max_rsi_buy = float(
+                source.get("max_rsi_buy", 42.0)
+                if isinstance(source, dict)
+                else getattr(source, "max_rsi_buy", 42.0)
+            )
+            self.min_rsi_sell = float(
+                source.get("min_rsi_sell", 58.0)
+                if isinstance(source, dict)
+                else getattr(source, "min_rsi_sell", 58.0)
+            )
+            self.min_volume_ratio = float(
+                source.get("min_volume_ratio", 0.5)
+                if isinstance(source, dict)
+                else getattr(source, "min_volume_ratio", 0.5)
+            )
         else:
-            # Config dataclass object — يستخدم config.get() التي تقرأ من env vars
-            self.max_rsi_buy = float(config.get("max_rsi_buy", 42.0))
-            self.min_rsi_sell = float(config.get("min_rsi_sell", 58.0))
-            self.min_volume_ratio = float(config.get("min_volume_ratio", 0.5))
+            risk = getattr(config, "risk", config)
+            self.max_rsi_buy = float(getattr(risk, "max_rsi_buy", 42.0))
+            self.min_rsi_sell = float(getattr(risk, "min_rsi_sell", 58.0))
+            self.min_volume_ratio = float(getattr(risk, "min_volume_ratio", 0.5))
 
     def validate_signal(
         self,

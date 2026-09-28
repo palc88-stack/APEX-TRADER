@@ -21,6 +21,8 @@ jobs:
       ENVIRONMENT: ${{ vars.ENVIRONMENT || 'production' }}
       BINANCE_TESTNET: ${{ vars.BINANCE_TESTNET || 'true' }}
       ALLOW_LIVE_TRADING: ${{ vars.ALLOW_LIVE_TRADING || 'false' }}
+      TRADING_EXECUTION_ENABLED: "false"
+      ALLOW_NEW_ENTRIES: "false"
       APEX_RUN_CYCLES: "1"
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
       SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}

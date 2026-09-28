@@ -36,6 +36,20 @@ class ExchangeManager:
         self.secret_key = getattr(exchange_cfg, "binance_secret_key", "") or os.getenv("BINANCE_SECRET_KEY", "")
         self.is_testnet = bool(getattr(exchange_cfg, "binance_testnet", True))
         self.allow_live = os.getenv("ALLOW_LIVE_TRADING", "false").strip().lower() in {"1", "true", "yes", "on"}
+        configured_execution = getattr(config, "trading_execution_enabled", None)
+        configured_entries = getattr(config, "allow_new_entries", None)
+        self._execution_enabled = (
+            bool(configured_execution)
+            if configured_execution is not None
+            else os.getenv("TRADING_EXECUTION_ENABLED", "false").strip().lower()
+            in {"1", "true", "yes", "on"}
+        )
+        self._allow_new_entries = (
+            bool(configured_entries)
+            if configured_entries is not None
+            else os.getenv("ALLOW_NEW_ENTRIES", "false").strip().lower()
+            in {"1", "true", "yes", "on"}
+        )
         if not self.is_testnet and not self.allow_live:
             raise ExchangeSafetyError(
                 "Live trading is disabled. Set ALLOW_LIVE_TRADING=true only in a protected environment"
@@ -68,6 +82,18 @@ class ExchangeManager:
             await self._exchange.load_markets()
             self._markets_loaded = True
         return self._exchange
+
+    def _assert_execution_allowed(self, operation: str, *, new_entry: bool = False) -> None:
+        """Fail closed before any account-mutating exchange request."""
+        enabled = getattr(self, "_execution_enabled", True)
+        if not enabled:
+            raise ExchangeSafetyError(
+                f"{operation} blocked: TRADING_EXECUTION_ENABLED is false"
+            )
+        if new_entry and not getattr(self, "_allow_new_entries", True):
+            raise ExchangeSafetyError(
+                f"{operation} blocked: ALLOW_NEW_ENTRIES is false"
+            )
 
     @staticmethod
     def _finite_positive(value: Any, field: str) -> float:
@@ -207,6 +233,7 @@ class ExchangeManager:
             return None
 
     async def _set_leverage(self, symbol: str, leverage: int) -> None:
+        self._assert_execution_allowed("set_leverage", new_entry=True)
         exchange = await self._ensure_ready()
         if leverage < 1 or leverage > 125:
             raise ExchangeSafetyError("leverage is outside Binance USD-M bounds")
@@ -214,6 +241,7 @@ class ExchangeManager:
 
     async def _create_protection(self, symbol: str, side: str, amount: float, stop_loss: float, take_profit: float) -> set[str]:
         """Create Binance USD-M conditional protection through Algo Orders."""
+        self._assert_execution_allowed("create_protection")
         exchange = await self._ensure_ready()
         close_side = "sell" if side == "buy" else "buy"
         market_id = str(exchange.market(symbol)["id"])
@@ -252,6 +280,7 @@ class ExchangeManager:
         leverage: Optional[int] = None,
         client_order_id: Optional[str] = None,
     ) -> Dict[str, Any]:
+        self._assert_execution_allowed("place_order", new_entry=True)
         exchange = await self._ensure_ready()
         if side.lower() not in {"buy", "sell"}:
             raise ExchangeSafetyError("side must be buy or sell")
@@ -296,6 +325,7 @@ class ExchangeManager:
         }
 
     async def reduce_only_close(self, symbol: str, amount: float, reason: str = "manual") -> Dict[str, Any]:
+        self._assert_execution_allowed("reduce_only_close")
         exchange = await self._ensure_ready()
         amount = await self._format_amount(symbol, self._finite_positive(amount, "amount"))
         positions = await exchange.fetch_positions([symbol])
@@ -309,6 +339,7 @@ class ExchangeManager:
 
     async def _cancel_protection_orders(self, symbol: str) -> None:
         """Cancel active Binance Algo Orders before closing a position."""
+        self._assert_execution_allowed("cancel_protection_orders")
         exchange = await self._ensure_ready()
         market_id = str(exchange.market(symbol)["id"])
         try:
@@ -330,6 +361,7 @@ class ExchangeManager:
                     logger.warning("Unable to cancel algo order {} for {}: {}", algo_id, symbol, exc)
 
     async def close_position(self, symbol: str, position_id: str, reason: str, price: float) -> Dict[str, Any]:
+        self._assert_execution_allowed("close_position")
         exchange = await self._ensure_ready()
         await self._cancel_protection_orders(symbol)
         positions = await exchange.fetch_positions([symbol])

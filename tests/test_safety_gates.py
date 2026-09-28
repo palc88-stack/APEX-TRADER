@@ -32,6 +32,35 @@ def test_non_binance_is_rejected(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_account_mutations_are_blocked_by_default(monkeypatch):
+    monkeypatch.delenv("TRADING_EXECUTION_ENABLED", raising=False)
+    monkeypatch.delenv("ALLOW_NEW_ENTRIES", raising=False)
+    manager = ExchangeManager(SimpleNamespace(exchange=exchange_config(True)))
+
+    with pytest.raises(ExchangeSafetyError, match="TRADING_EXECUTION_ENABLED"):
+        await manager.place_order(
+            symbol="BTC/USDT", side="buy", amount=0.001,
+            price=50000, stop_loss=49000, take_profit=51000,
+        )
+
+    with pytest.raises(ExchangeSafetyError, match="TRADING_EXECUTION_ENABLED"):
+        await manager.reduce_only_close("BTC/USDT", 0.001)
+
+
+@pytest.mark.asyncio
+async def test_new_entries_can_be_disabled_while_execution_remains_available(monkeypatch):
+    monkeypatch.setenv("TRADING_EXECUTION_ENABLED", "true")
+    monkeypatch.setenv("ALLOW_NEW_ENTRIES", "false")
+    manager = ExchangeManager(SimpleNamespace(exchange=exchange_config(True)))
+
+    with pytest.raises(ExchangeSafetyError, match="ALLOW_NEW_ENTRIES"):
+        await manager.place_order(
+            symbol="BTC/USDT", side="buy", amount=0.001,
+            price=50000, stop_loss=49000, take_profit=51000,
+        )
+
+
+@pytest.mark.asyncio
 async def test_testnet_adapter_closes_without_network(monkeypatch):
     monkeypatch.setenv("ALLOW_LIVE_TRADING", "false")
     manager = ExchangeManager(SimpleNamespace(exchange=exchange_config(True)))
@@ -87,3 +116,5 @@ def test_workflow_has_no_schedule_or_live_secret():
     assert "\n  schedule:" not in workflow
     assert 'ALLOW_LIVE_TRADING: "false"' in workflow
     assert 'BINANCE_TESTNET: "true"' in workflow
+    assert 'TRADING_EXECUTION_ENABLED: "false"' in workflow
+    assert 'ALLOW_NEW_ENTRIES: "false"' in workflow

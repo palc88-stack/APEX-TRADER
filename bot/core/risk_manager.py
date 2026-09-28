@@ -84,10 +84,14 @@ class RiskManager:
 
             # 2. فحص مستوى الثقة
             confidence = getattr(signal, "confidence", 0.0)
-            if confidence < 0.65:
+            min_confidence = getattr(
+                getattr(self.config, "risk", None), "min_confidence", 0.65
+            )
+            if confidence < float(min_confidence):
                 logger.warning(
-                    "⚠️ رُفضت الإشارة: الثقة منخفضة ({:.0%}) < 65%",
-                    confidence
+                    "⚠️ رُفضت الإشارة: الثقة منخفضة ({:.0%}) < {:.0%}",
+                    confidence,
+                    float(min_confidence),
                 )
                 return False
 
