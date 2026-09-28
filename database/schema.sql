@@ -216,6 +216,10 @@ CREATE TABLE IF NOT EXISTS trades (
 -- IDs are longer, so widen it without changing existing values.
 ALTER TABLE trades ALTER COLUMN id TYPE TEXT USING id::text;
 
+ALTER TABLE trades DROP CONSTRAINT IF EXISTS trades_pnl_check;
+ALTER TABLE trades ADD CONSTRAINT trades_pnl_check
+    CHECK (status IN ('OPEN', 'NEEDS_RECONCILIATION') OR pnl IS NOT NULL);
+
 ALTER TABLE trades ADD COLUMN IF NOT EXISTS margin_usd DECIMAL(18, 4);
 ALTER TABLE trades ADD COLUMN IF NOT EXISTS notional_usd DECIMAL(18, 4);
 ALTER TABLE trades ADD COLUMN IF NOT EXISTS entry_quantity DECIMAL(18, 8);
