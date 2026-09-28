@@ -165,6 +165,28 @@ class StateManager:
         except Exception as e:
             logger.error("❌ mark_bot_stopped: {}", e)
 
+    def get_reconciliation_alert_key(self) -> str:
+        """Return the last persisted reconciliation alert key."""
+        return str(self.initial_bot_state.get("reconciliation_alert_key") or "")
+
+    def mark_reconciliation_alerted(self, alert_key: str) -> bool:
+        """Persist an idempotency key so scheduled runs do not spam Telegram."""
+        if not self.client or not alert_key:
+            return False
+        try:
+            now = datetime.now(timezone.utc).isoformat()
+            self.client.table("bot_state").upsert({
+                "id": 1,
+                "reconciliation_alert_key": alert_key,
+                "reconciliation_alerted_at": now,
+                "updated_at": now,
+            }).execute()
+            self.initial_bot_state["reconciliation_alert_key"] = alert_key
+            return True
+        except Exception as e:
+            logger.error("❌ mark_reconciliation_alerted: {}", e)
+            return False
+
     # ─── Trades ───────────────────────────────────────────────────────────────
 
     def save_trade_state(self, trade_data: Dict[str, Any]) -> bool:

@@ -5,6 +5,7 @@
 # رسائل منسقة وآمنة
 
 import asyncio
+from html import escape
 from typing import Optional
 from datetime import date, datetime, timezone
 from loguru import logger
@@ -334,6 +335,28 @@ class TelegramNotifier:
         )
 
         await self.send(message)
+
+    async def send_reconciliation_required(self, records: list[dict]) -> bool:
+        """Alert about unresolved state without automatic account mutations."""
+        lines = []
+        for record in records[:20]:
+            symbol = escape(str(record.get("symbol") or "UNKNOWN"))
+            status = escape(str(record.get("status") or "NEEDS_RECONCILIATION"))
+            strategy = escape(str(record.get("strategy") or "RECONCILIATION"))
+            note = escape(str(record.get("reconciliation_note") or "unresolved state"))
+            lines.append(
+                f"├ <b>{symbol}</b> · <code>{status}</code> · <code>{strategy}</code>\n"
+                f"└ {note}"
+            )
+        message = (
+            "⬡ <b>APEX TRADER</b>\n\n"
+            "🚨 <b>مصالحة يدوية مطلوبة</b>\n\n"
+            "تمت مطابقة حالة المنصة تلقائياً، لكن توجد حالة غير مؤكدة.\n"
+            "تم حظر التداول على الرموز المتأثرة، ولم يتم إغلاق أو تبنّي أي مركز تلقائياً.\n\n"
+            + "\n".join(lines)
+            + "\n\n🔎 راجع سجل المركز في Supabase ولوحة Cloudflare قبل أي إجراء."
+        )
+        return await self.send(message)
 
     async def send_startup(
         self,

@@ -193,7 +193,7 @@ function Dashboard() {
         .select(
           "id,symbol,direction,mode,strategy,entry_price,exit_price,stop_loss," +
             "take_profit_1,take_profit_2,size_usd,leverage,pnl,pnl_pct," +
-            "status,close_reason,pnl_source,opened_at,closed_at,duration_minutes"
+            "status,close_reason,pnl_source,reconciliation_note,opened_at,closed_at,duration_minutes"
         )
         .order("opened_at", { ascending: false })
         .limit(200),
@@ -282,6 +282,11 @@ function Dashboard() {
       return matchesSearch && matchesResult;
     });
   }, [trades, search, resultFilter]);
+
+  const reconciliationTrades = useMemo(
+    () => trades.filter((trade) => trade.status === "NEEDS_RECONCILIATION"),
+    [trades]
+  );
 
   if (loading) {
     return <main className="page loading">جارٍ تحميل لوحة APEX...</main>;
@@ -396,6 +401,13 @@ function Dashboard() {
       {status?.environment === "live" && (
         <div className="warning-banner">
           تنبيه: هذه لوحة متابعة وليست وسيلة حماية أو تنفيذ أوامر.
+        </div>
+      )}
+
+      {reconciliationTrades.length > 0 && (
+        <div className="warning-banner">
+          <b>مصالحة يدوية مطلوبة:</b> {reconciliationTrades.length} حالة محجوبة.
+          التداول الآلي متوقف لهذه الحالات حتى تأكيد بيانات البورصة؛ لا يتم إغلاق أو تبنّي مركز تلقائياً.
         </div>
       )}
 

@@ -1,6 +1,8 @@
 # bot/main.py - Binance Testnet polling trader
 
 import asyncio
+import hashlib
+import json
 import logging
 import os
 import time
@@ -203,6 +205,34 @@ class ApexTraderBot:
                 "🛑 Persisted orphan exchange positions as NEEDS_RECONCILIATION: %s",
                 ", ".join(sorted(orphans)),
             )
+
+        await self._notify_reconciliation_required()
+
+    async def _notify_reconciliation_required(self) -> None:
+        """Notify once per persisted unresolved-state snapshot; never mutate positions."""
+        records = [
+            trade for trade in self.state_manager.get_open_trades_from_db()
+            if trade.get("status") == "NEEDS_RECONCILIATION"
+        ]
+        if not records:
+            return
+        payload = [
+            {
+                "id": str(record.get("id") or ""),
+                "symbol": str(record.get("symbol") or ""),
+                "status": str(record.get("status") or ""),
+                "strategy": str(record.get("strategy") or ""),
+                "reconciliation_note": str(record.get("reconciliation_note") or ""),
+            }
+            for record in records
+        ]
+        alert_key = hashlib.sha256(
+            json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
+        ).hexdigest()
+        if alert_key == self.state_manager.get_reconciliation_alert_key():
+            return
+        if await self.telegram.send_reconciliation_required(records):
+            self.state_manager.mark_reconciliation_alerted(alert_key)
 
     def _persist_orphan_position(
         self, position: dict[str, Any], slot: dict[str, Any] | None

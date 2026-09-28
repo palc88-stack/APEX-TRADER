@@ -51,6 +51,8 @@ CREATE TABLE IF NOT EXISTS bot_state (
     -- ✅ إضافة: مراقبة الأخطاء
     error_count INTEGER DEFAULT 0,
     last_error TEXT,
+    reconciliation_alert_key TEXT,
+    reconciliation_alerted_at TIMESTAMPTZ,
 
     -- ✅ إضافة: الخسائر والربح اليومي
     daily_loss_limit_usd DECIMAL(10, 2) DEFAULT 100.00,
@@ -80,6 +82,10 @@ ALTER TABLE bot_state
     ADD COLUMN IF NOT EXISTS error_count INTEGER DEFAULT 0;
 ALTER TABLE bot_state
     ADD COLUMN IF NOT EXISTS last_error TEXT;
+ALTER TABLE bot_state
+    ADD COLUMN IF NOT EXISTS reconciliation_alert_key TEXT;
+ALTER TABLE bot_state
+    ADD COLUMN IF NOT EXISTS reconciliation_alerted_at TIMESTAMPTZ;
 ALTER TABLE bot_state
     ADD COLUMN IF NOT EXISTS daily_loss_limit_usd DECIMAL(10, 2) DEFAULT 100.00;
 ALTER TABLE bot_state
