@@ -6,7 +6,7 @@
 
 import asyncio
 from typing import Optional
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from loguru import logger
 import aiohttp
 
