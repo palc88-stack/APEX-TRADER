@@ -162,15 +162,16 @@ class ExchangeManager:
             info = ticker.get("info") or {}
             try:
                 quote_volume = float(ticker.get("quoteVolume") or info.get("quoteVolume") or 0.0)
-                last = float(ticker.get("last") or 0.0)
-                bid = float(ticker.get("bid") or 0.0)
-                ask = float(ticker.get("ask") or 0.0)
+                last = float(ticker.get("last") or info.get("lastPrice") or 0.0)
+                bid = float(ticker.get("bid") or info.get("bidPrice") or 0.0)
+                ask = float(ticker.get("ask") or info.get("askPrice") or 0.0)
             except (TypeError, ValueError):
                 continue
             if quote_volume <= 0 or last <= 0:
                 continue
             mid = (bid + ask) / 2.0 if bid > 0 and ask > 0 else last
-            spread_bps = ((ask - bid) / mid * 10000.0) if bid > 0 and ask >= bid else 0.0
+            # Unknown spread is treated conservatively, never as zero.
+            spread_bps = ((ask - bid) / mid * 10000.0) if bid > 0 and ask >= bid else 50.0
             if spread_bps > 50.0:
                 continue
             candidates.append({
