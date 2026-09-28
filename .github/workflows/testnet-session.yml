@@ -32,6 +32,8 @@ jobs:
       PRIMARY_EXCHANGE: binance
       BINANCE_TESTNET: "true"
       ALLOW_LIVE_TRADING: "false"
+      TRADING_EXECUTION_ENABLED: "true"
+      ALLOW_NEW_ENTRIES: "true"
       APEX_RUN_CYCLES: ${{ inputs.cycles }}
       APEX_CYCLE_INTERVAL_SECONDS: ${{ inputs.interval_seconds }}
       TRADING_SYMBOLS: BTC/USDT
@@ -62,6 +64,8 @@ jobs:
         run: |
           test "$BINANCE_TESTNET" = "true"
           test "$ALLOW_LIVE_TRADING" = "false"
+          test "$TRADING_EXECUTION_ENABLED" = "true"
+          test "$ALLOW_NEW_ENTRIES" = "true"
           test "$PRIMARY_EXCHANGE" = "binance"
           test -n "$BINANCE_API_KEY"
           test -n "$BINANCE_SECRET_KEY"

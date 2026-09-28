@@ -18,6 +18,7 @@ class StateManager:
 
     def __init__(self, config: Optional[Any] = None):
         self.config = config
+        self.initial_bot_state: Dict[str, Any] = {}
 
         supabase_url = (
             getattr(getattr(config, "database", None), "supabase_url", None)
@@ -56,6 +57,8 @@ class StateManager:
         if not self.client:
             return
         try:
+            state_result = self.client.table("bot_state").select("*").eq("id", 1).maybe_single().execute()
+            self.initial_bot_state = dict(getattr(state_result, "data", None) or {})
             open_trades = self.get_open_trades_from_db()
             logger.info(
                 "✅ تم استعادة {} صفقة مفتوحة من قاعدة البيانات.",
@@ -94,6 +97,7 @@ class StateManager:
         daily_loss_used: Optional[float] = None,
         daily_realized_pnl: Optional[float] = None,
         daily_loss_limit: Optional[float] = None,
+        risk_day: Optional[str] = None,
     ) -> None:
         """
         تحديث الحالة المالية للبوت — يُستخدم من main.py.
@@ -115,6 +119,8 @@ class StateManager:
                 updates["daily_realized_pnl"] = round(daily_realized_pnl, 2)
             if daily_loss_limit is not None:
                 updates["daily_loss_limit_usd"] = round(daily_loss_limit, 2)
+            if risk_day is not None:
+                updates["risk_day"] = risk_day
             # ✅ استخدام upsert بدلاً من update — يضمن وجود الصف
             self.client.table("bot_state").upsert(updates).execute()
             logger.info(
@@ -199,7 +205,7 @@ class StateManager:
     def get_open_trades_from_db(self) -> List[Dict[str, Any]]:
         """استرجاع OPEN وNEEDS_RECONCILIATION معاً للمراجعة الآمنة."""
         if not self.client:
-            return []
+            raise RuntimeError("Supabase client is unavailable; state read failed closed")
         try:
             res = (
                 self.client.table("trades")
@@ -210,7 +216,7 @@ class StateManager:
             return res.data if res and hasattr(res, "data") else []
         except Exception as e:
             logger.error("❌ get_open_trades_from_db: {}", e)
-            return []
+            raise RuntimeError("Supabase open-trades query failed") from e
 
     def reconstruct_position(
         self, trade_dict: Dict[str, Any]
@@ -239,10 +245,16 @@ class StateManager:
                 take_profit_2=float(trade_dict.get("take_profit_2", 0)),
                 size_usd=float(trade_dict.get("size_usd", 0)),
                 leverage=int(trade_dict.get("leverage", 10)),
+                entry_quantity=float(trade_dict.get("entry_quantity", 0) or 0),
+                remaining_quantity=float(trade_dict.get("remaining_quantity", 0) or 0),
                 entry_fee=float(trade_dict.get("entry_fee", 0)),
                 exit_fee=float(trade_dict.get("exit_fee", 0)),
                 # ✅ استعادة حالة Trailing/BreakEven من DB
                 tp1_executed=bool(trade_dict.get("tp1_executed", False)),
+                exchange_managed_protection=bool(
+                    trade_dict.get("take_profit_1_algo_id")
+                    or trade_dict.get("take_profit_2_algo_id")
+                ),
                 trailing_active=bool(trade_dict.get("trailing_active", False)),
                 trailing_stop=float(trade_dict.get("trailing_stop", 0)),
                 breakeven_set=bool(trade_dict.get("breakeven_set", False)),

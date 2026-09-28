@@ -21,6 +21,8 @@ jobs:
       ENVIRONMENT: testnet
       BINANCE_TESTNET: "true"
       ALLOW_LIVE_TRADING: "false"
+      TRADING_EXECUTION_ENABLED: "false"
+      ALLOW_NEW_ENTRIES: "false"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -35,7 +37,7 @@ jobs:
       - name: Compile Python
         run: python -m compileall -q bot tests
       - name: Unit tests
-        run: python -m pytest -q tests/test_exchange_config.py tests/test_full_system.py --timeout=30
+        run: python -m pytest -q --timeout=30
       - name: Verify Worker syntax
         run: node --check src/worker.js
       - name: Build dashboard
@@ -50,6 +52,8 @@ jobs:
           workflow = Path('.github/workflows/binance.yml').read_text()
           schema = Path('database/schema.sql').read_text()
           assert 'ALLOW_LIVE_TRADING' in exchange
+          assert 'TRADING_EXECUTION_ENABLED' in exchange
+          assert 'TRADING_EXECUTION_ENABLED' in workflow
           assert 'reduce_only_close' in exchange
           assert 'ASSETS.fetch' in worker
           assert 'WEBHOOK_SECRET' not in worker

@@ -6,6 +6,14 @@ import os
 from dataclasses import dataclass, field
 from typing import List
 
+try:
+    from dotenv import load_dotenv
+except ImportError:  # pragma: no cover - optional in minimal test environments
+    load_dotenv = None
+
+if load_dotenv is not None:
+    load_dotenv()
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Helpers
@@ -138,6 +146,9 @@ class RiskConfig:
     trailing_activation_pct: float = field(default_factory=lambda: _env_float("TRAILING_ACTIVATION_PCT", 0.30))
     scalp_take_profit_pct: float = field(default_factory=lambda: _env_float("SCALP_TAKE_PROFIT_PCT", 0.005))
     scalp_stop_loss_pct: float = field(default_factory=lambda: _env_float("SCALP_STOP_LOSS_PCT", 0.003))
+    max_rsi_buy: float = field(default_factory=lambda: _env_float("MAX_RSI_BUY", 42.0))
+    min_rsi_sell: float = field(default_factory=lambda: _env_float("MIN_RSI_SELL", 58.0))
+    min_volume_ratio: float = field(default_factory=lambda: _env_float("MIN_VOLUME_RATIO", 0.5))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -173,6 +184,12 @@ class Config:
     active_mode: str = field(default_factory=lambda: _env_text("ACTIVE_MODE", "HUNTER").upper())
     environment: str = field(default_factory=lambda: _env_text("ENVIRONMENT", "testnet"))
     allow_live_trading: bool = field(default_factory=lambda: _env_bool("ALLOW_LIVE_TRADING", False))
+    trading_execution_enabled: bool = field(
+        default_factory=lambda: _env_bool("TRADING_EXECUTION_ENABLED", False)
+    )
+    allow_new_entries: bool = field(
+        default_factory=lambda: _env_bool("ALLOW_NEW_ENTRIES", False)
+    )
 
     # ── Methods for backward compatibility with config.get(key) pattern ──
     def get(self, key: str, default: str = "") -> str:

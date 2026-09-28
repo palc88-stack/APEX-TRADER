@@ -84,10 +84,14 @@ class RiskManager:
 
             # 2. فحص مستوى الثقة
             confidence = getattr(signal, "confidence", 0.0)
-            if confidence < 0.65:
+            min_confidence = getattr(
+                getattr(self.config, "risk", None), "min_confidence", 0.65
+            )
+            if confidence < float(min_confidence):
                 logger.warning(
-                    "⚠️ رُفضت الإشارة: الثقة منخفضة ({:.0%}) < 65%",
-                    confidence
+                    "⚠️ رُفضت الإشارة: الثقة منخفضة ({:.0%}) < {:.0%}",
+                    confidence,
+                    float(min_confidence),
                 )
                 return False
 
@@ -122,12 +126,13 @@ class RiskManager:
                 )
                 return False
 
-            if size_usd > (account_balance * leverage):
-                logger.warning("⚠️ حجم الصفقة يتجاوز الحد الآمن.")
+            if size_usd > account_balance:
+                logger.warning("⚠️ الهامش المطلوب يتجاوز الرصيد المتاح.")
                 return False
 
             sl_distance_pct = abs(entry_price - stop_loss) / entry_price
-            potential_loss = size_usd * sl_distance_pct
+            notional_usd = size_usd * leverage
+            potential_loss = notional_usd * sl_distance_pct
             max_allowed_loss = account_balance * self.max_risk_per_trade_pct
 
             if potential_loss > max_allowed_loss:

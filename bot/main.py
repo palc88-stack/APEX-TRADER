@@ -46,6 +46,7 @@ class ApexTraderBot:
         # ✅ تتبع الحالة المالية اليومية
         self._daily_loss_used = 0.0
         self._daily_realized_pnl = 0.0
+        self._risk_day = datetime.now(timezone.utc).date().isoformat()
         self._current_balance = 0.0
         self._reconciliation_blocked_symbols: set[str] = set()
 
@@ -70,6 +71,7 @@ class ApexTraderBot:
                         daily_loss_used=self._daily_loss_used,
                         daily_realized_pnl=self._daily_realized_pnl,
                         daily_loss_limit=self._daily_loss_limit,
+                        risk_day=self._risk_day,
                     )
                 except Exception as e:
                     logger.debug(f"⚠️ لا يمكن جلب الرصيد للـ heartbeat: {e}")
@@ -80,6 +82,17 @@ class ApexTraderBot:
     async def initialize(self) -> None:
         logger.info("Initializing ApexTrader...")
         await self.state_manager.load_initial_state()
+        stored_day = str(self.state_manager.initial_bot_state.get("risk_day") or "")
+        if stored_day == self._risk_day:
+            self._daily_loss_used = float(
+                self.state_manager.initial_bot_state.get("daily_loss_used_usd") or 0.0
+            )
+            self._daily_realized_pnl = float(
+                self.state_manager.initial_bot_state.get("daily_realized_pnl") or 0.0
+            )
+        else:
+            self._daily_loss_used = 0.0
+            self._daily_realized_pnl = 0.0
         await self._reconcile_before_trading()
 
         # ✅ فحص اتصال Supabase - إذا فشل، نكتب في واجهة مستقلة
@@ -98,6 +111,7 @@ class ApexTraderBot:
             daily_loss_used=self._daily_loss_used,
             daily_realized_pnl=self._daily_realized_pnl,
             daily_loss_limit=self._daily_loss_limit,
+            risk_day=self._risk_day,
         )
 
         if self.state_manager.client is None:
@@ -198,7 +212,11 @@ class ApexTraderBot:
                             f"🎯 TP1 وصل لـ {symbol} — إغلاق جزئي مطلوب ({pct}%)"
                         )
                         try:
-                            partial_amount = (pos_obj.size_usd * pos_obj.leverage / current_price) * (pct / 100.0)
+                            available_quantity = (
+                                pos_obj.remaining_quantity
+                                or (pos_obj.size_usd * pos_obj.leverage / pos_obj.entry_price)
+                            )
+                            partial_amount = available_quantity * (pct / 100.0)
                             partial_order = await self.exchange.reduce_only_close(
                                 symbol=symbol,
                                 amount=partial_amount,
@@ -245,7 +263,13 @@ class ApexTraderBot:
                         except Exception as partial_err:
                             logger.error(f"❌ فشل تنفيذ الإغلاق الجزئي (TP1) لـ {symbol}: {partial_err}")
                         else:
-                            if not self.state_manager.save_trade_state({**pos, "tp1_executed": True}):
+                            pos_obj.apply_partial_close(partial_fill.quantity)
+                            if not self.state_manager.save_trade_state({
+                                **pos,
+                                "tp1_executed": True,
+                                "remaining_quantity": pos_obj.remaining_quantity,
+                                "entry_quantity": pos_obj.entry_quantity,
+                            }):
                                 raise RuntimeError("partial close executed but state persistence failed")
                             await self.telegram.send_partial_close(
                                 pos_obj, partial_fill.price, pct, partial_pnl=partial_pnl,
@@ -390,16 +414,22 @@ class ApexTraderBot:
                 ):
                     continue
 
+                # size_usd is margin; the exchange order uses the leveraged notional.
+                notional_usd = size_usd * leverage
+                order_amount = notional_usd / entry_price
+
                 # 5. تنفيذ الأمر على البورصة
                 order = await self.exchange.place_order(
                     symbol=symbol,
                     side=side,
-                    amount=size_usd / entry_price,
+                    amount=order_amount,
                     price=entry_price,
                     stop_loss=stop_loss,
                     take_profit=take_profit_1,
                     leverage=leverage,
                     client_order_id=f"apex-{symbol.replace('/', '')}-{int(time.time() * 1000)}",
+                    take_profit_2=take_profit_2,
+                    tp1_fraction=0.5,
                 )
 
                 entry_order_id = str(order.get("id") or "")
@@ -409,9 +439,31 @@ class ApexTraderBot:
                 )
                 protection_ids = [str(value) for value in order.get("protection_order_ids", [])]
 
+                if entry_fill is None or not entry_fill.is_pnl_eligible:
+                    self._reconciliation_blocked_symbols.add(symbol)
+                    self.state_manager.save_trade_state({
+                        "id": entry_order_id,
+                        "symbol": symbol,
+                        "direction": str(action_val).upper(),
+                        "status": "NEEDS_RECONCILIATION",
+                        "entry_order_id": entry_order_id,
+                        "entry_client_order_id": order.get("clientOrderId"),
+                        "entry_price_source": entry_fill.price_source.value if entry_fill else "unconfirmed",
+                        "entry_quantity_source": entry_fill.quantity_source.value if entry_fill else "unconfirmed",
+                        "entry_fee_source": entry_fill.fee_source.value if entry_fill else "unconfirmed",
+                        "pnl_source": "unconfirmed",
+                        "reconciliation_note": "entry fill or fee could not be confirmed",
+                    })
+                    raise RuntimeError("entry fill is not eligible for accounting; reconciliation required")
+
+                entry_price = entry_fill.price
+                entry_quantity = entry_fill.quantity
+                notional_usd = entry_price * entry_quantity
+                size_usd = notional_usd / leverage
+
                 # 6. حفظ الصفقة
                 fee_result = self.fee_calculator.calculate(
-                    position_size=size_usd * leverage
+                    position_size=notional_usd
                 )
                 trade_record = {
                     "id": entry_order_id,
@@ -430,6 +482,8 @@ class ApexTraderBot:
                     "entry_client_order_id": order.get("clientOrderId"),
                     "stop_algo_id": protection_ids[0] if len(protection_ids) > 0 else None,
                     "take_profit_algo_id": protection_ids[1] if len(protection_ids) > 1 else None,
+                    "take_profit_1_algo_id": protection_ids[1] if len(protection_ids) > 1 else None,
+                    "take_profit_2_algo_id": protection_ids[2] if len(protection_ids) > 2 else None,
                     "entry_price_source": entry_fill.price_source.value if entry_fill else "unconfirmed",
                     "entry_quantity_source": entry_fill.quantity_source.value if entry_fill else "unconfirmed",
                     "entry_fee_source": entry_fill.fee_source.value if entry_fill else "unconfirmed",
@@ -437,8 +491,12 @@ class ApexTraderBot:
                     "take_profit_1": take_profit_1,
                     "take_profit_2": take_profit_2,
                     "size_usd": size_usd,
+                    "margin_usd": size_usd,
+                    "notional_usd": notional_usd,
+                    "entry_quantity": entry_quantity,
+                    "remaining_quantity": entry_quantity,
                     "leverage": leverage,
-                    "entry_fee": fee_result.entry_fee,
+                    "entry_fee": entry_fill.fee,
                     "exit_fee": fee_result.exit_fee,
                     "status": "OPEN",
                     "confidence": signal_result.get("confidence", 0.0),
@@ -452,6 +510,11 @@ class ApexTraderBot:
                 }
                 if not self.state_manager.save_trade_state(trade_record):
                     raise RuntimeError("order executed but trade state could not be persisted")
+                position = self.state_manager.reconstruct_position(trade_record)
+                if position is None:
+                    self._reconciliation_blocked_symbols.add(symbol)
+                    raise RuntimeError("saved trade could not be reconstructed locally")
+                self.position_manager.add_position(position)
                 logger.info(f"✅ صفقة جديدة: {symbol} {side} @ {entry_price}")
 
             except Exception as e:
