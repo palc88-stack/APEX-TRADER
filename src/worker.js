@@ -10,6 +10,18 @@ export default {
       });
     }
 
+    const url = new URL(request.url);
+    if (url.pathname === "/api/health") {
+      return new Response(JSON.stringify({
+        service: "apex-trader-dashboard",
+        worker: "ok",
+        stage: "strategy-router",
+      }), {
+        status: 200,
+        headers: { "content-type": "application/json; charset=utf-8" },
+      });
+    }
+
     return env.ASSETS.fetch(request);
   },
 };
