@@ -245,6 +245,10 @@ class StateManager:
                 exit_fee=float(trade_dict.get("exit_fee", 0)),
                 # ✅ استعادة حالة Trailing/BreakEven من DB
                 tp1_executed=bool(trade_dict.get("tp1_executed", False)),
+                exchange_managed_protection=bool(
+                    trade_dict.get("take_profit_1_algo_id")
+                    or trade_dict.get("take_profit_2_algo_id")
+                ),
                 trailing_active=bool(trade_dict.get("trailing_active", False)),
                 trailing_stop=float(trade_dict.get("trailing_stop", 0)),
                 breakeven_set=bool(trade_dict.get("breakeven_set", False)),

@@ -414,6 +414,8 @@ class ApexTraderBot:
                     take_profit=take_profit_1,
                     leverage=leverage,
                     client_order_id=f"apex-{symbol.replace('/', '')}-{int(time.time() * 1000)}",
+                    take_profit_2=take_profit_2,
+                    tp1_fraction=0.5,
                 )
 
                 entry_order_id = str(order.get("id") or "")
@@ -466,6 +468,8 @@ class ApexTraderBot:
                     "entry_client_order_id": order.get("clientOrderId"),
                     "stop_algo_id": protection_ids[0] if len(protection_ids) > 0 else None,
                     "take_profit_algo_id": protection_ids[1] if len(protection_ids) > 1 else None,
+                    "take_profit_1_algo_id": protection_ids[1] if len(protection_ids) > 1 else None,
+                    "take_profit_2_algo_id": protection_ids[2] if len(protection_ids) > 2 else None,
                     "entry_price_source": entry_fill.price_source.value if entry_fill else "unconfirmed",
                     "entry_quantity_source": entry_fill.quantity_source.value if entry_fill else "unconfirmed",
                     "entry_fee_source": entry_fill.fee_source.value if entry_fill else "unconfirmed",

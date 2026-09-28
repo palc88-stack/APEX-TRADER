@@ -239,23 +239,45 @@ class ExchangeManager:
             raise ExchangeSafetyError("leverage is outside Binance USD-M bounds")
         await exchange.set_leverage(leverage, symbol)
 
-    async def _create_protection(self, symbol: str, side: str, amount: float, stop_loss: float, take_profit: float) -> set[str]:
+    async def _create_protection(
+        self,
+        symbol: str,
+        side: str,
+        amount: float,
+        stop_loss: float,
+        take_profit: float,
+        take_profit_2: Optional[float] = None,
+        tp1_fraction: float = 0.5,
+    ) -> set[str]:
         """Create Binance USD-M conditional protection through Algo Orders."""
         self._assert_execution_allowed("create_protection")
         exchange = await self._ensure_ready()
         close_side = "sell" if side == "buy" else "buy"
         market_id = str(exchange.market(symbol)["id"])
         ids: set[str] = set()
-        for order_type, trigger_price, label in (
-            ("STOP_MARKET", stop_loss, "sl"),
-            ("TAKE_PROFIT_MARKET", take_profit, "tp"),
-        ):
+        orders = [("STOP_MARKET", amount, stop_loss, "sl")]
+        if take_profit_2 is None:
+            orders.append(("TAKE_PROFIT_MARKET", amount, take_profit, "tp"))
+        else:
+            if not 0 < tp1_fraction < 1:
+                raise ExchangeSafetyError("tp1_fraction must be between 0 and 1")
+            tp1_amount = amount * tp1_fraction
+            tp2_amount = amount - tp1_amount
+            orders.extend([
+                ("TAKE_PROFIT_MARKET", tp1_amount, take_profit, "tp1"),
+                ("TAKE_PROFIT_MARKET", tp2_amount, take_profit_2, "tp2"),
+            ])
+        for order_type, order_amount, trigger_price, label in orders:
+            if hasattr(exchange, "amount_to_precision"):
+                order_amount = await self._format_amount(symbol, order_amount)
+            else:  # lightweight test doubles may not expose market precision APIs
+                order_amount = float(order_amount)
             params = {
                 "algoType": "CONDITIONAL",
                 "symbol": market_id,
                 "side": close_side.upper(),
                 "type": order_type,
-                "quantity": amount,
+                "quantity": order_amount,
                 "triggerPrice": trigger_price,
                 "workingType": "CONTRACT_PRICE",
                 "reduceOnly": "true",
@@ -279,6 +301,8 @@ class ExchangeManager:
         take_profit: float,
         leverage: Optional[int] = None,
         client_order_id: Optional[str] = None,
+        take_profit_2: Optional[float] = None,
+        tp1_fraction: float = 0.5,
     ) -> Dict[str, Any]:
         self._assert_execution_allowed("place_order", new_entry=True)
         exchange = await self._ensure_ready()
@@ -300,7 +324,15 @@ class ExchangeManager:
             raise ExchangeSafetyError("entry order returned no order id")
 
         try:
-            protections = await self._create_protection(symbol, side.lower(), amount, stop_loss, take_profit)
+            protections = await self._create_protection(
+                symbol,
+                side.lower(),
+                amount,
+                stop_loss,
+                take_profit,
+                take_profit_2=take_profit_2,
+                tp1_fraction=tp1_fraction,
+            )
         except Exception as protection_error:
             logger.critical(f"Protection setup failed for {symbol}: {protection_error}")
             try:

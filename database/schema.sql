@@ -162,6 +162,8 @@ CREATE TABLE IF NOT EXISTS trades (
     entry_client_order_id TEXT,
     stop_algo_id TEXT,
     take_profit_algo_id TEXT,
+    take_profit_1_algo_id TEXT,
+    take_profit_2_algo_id TEXT,
     closing_order_id TEXT,
     entry_price_source VARCHAR(40) NOT NULL DEFAULT 'unconfirmed',
     entry_quantity_source VARCHAR(40) NOT NULL DEFAULT 'unconfirmed',
@@ -211,6 +213,8 @@ ALTER TABLE trades ADD COLUMN IF NOT EXISTS margin_usd DECIMAL(18, 4);
 ALTER TABLE trades ADD COLUMN IF NOT EXISTS notional_usd DECIMAL(18, 4);
 ALTER TABLE trades ADD COLUMN IF NOT EXISTS entry_quantity DECIMAL(18, 8);
 ALTER TABLE trades ADD COLUMN IF NOT EXISTS remaining_quantity DECIMAL(18, 8);
+ALTER TABLE trades ADD COLUMN IF NOT EXISTS take_profit_1_algo_id TEXT;
+ALTER TABLE trades ADD COLUMN IF NOT EXISTS take_profit_2_algo_id TEXT;
 
 -- فهارس لتسريع الاستعلامات المتكررة فعلياً في الكود:
 -- state_manager.get_open_trades_from_db() → .eq("status","OPEN")

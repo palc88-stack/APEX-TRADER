@@ -70,6 +70,7 @@ class Position:
     
     # TP1 تم تنفيذه؟
     tp1_executed: bool = False
+    exchange_managed_protection: bool = False
 
     def __post_init__(self) -> None:
         if self.remaining_quantity <= 0 and self.entry_quantity > 0:
@@ -324,6 +325,9 @@ class PositionManager:
         price: float
     ) -> Optional[dict]:
         """فحص أهداف الربح مع Partial Exit"""
+
+        if position.exchange_managed_protection:
+            return None
         
         if position.direction == TradeDirection.LONG:
             # TP1: إغلاق 50% عند الهدف الأول
