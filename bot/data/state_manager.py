@@ -374,3 +374,21 @@ class StateManager:
         except Exception as exc:
             logger.error("❌ release_position_slot: {}", exc)
             return False
+
+    def get_occupied_position_slots(self) -> List[Dict[str, Any]]:
+        """Read occupied/reserved slots for startup reconciliation."""
+        if not self.client:
+            return []
+        try:
+            result = (
+                self.client.table("position_slots")
+                .select("slot_no,symbol,trade_id,reservation_id,status")
+                .in_("status", ["reserved", "occupied"])
+                .order("slot_no")
+                .limit(100)
+                .execute()
+            )
+            return list(result.data or [])
+        except Exception as exc:
+            logger.error("❌ get_occupied_position_slots: {}", exc)
+            return []

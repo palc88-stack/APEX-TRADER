@@ -6,6 +6,7 @@ import os
 import time
 import uuid
 from datetime import datetime, timezone
+from typing import Any
 
 
 from bot.config import Config
@@ -179,11 +180,73 @@ class ApexTraderBot:
         local_symbols = set(local_open) | self._reconciliation_blocked_symbols
         orphans = exchange_symbols - local_symbols
         if orphans:
+            unresolved: set[str] = set()
+            occupied_slots = {
+                str(slot.get("symbol")): slot
+                for slot in self.state_manager.get_occupied_position_slots()
+                if slot.get("symbol")
+            }
+            for position in result.data:
+                symbol = str(position.get("symbol") or "")
+                if symbol not in orphans:
+                    continue
+                if not self._persist_orphan_position(position, occupied_slots.get(symbol)):
+                    unresolved.add(symbol)
             self._reconciliation_blocked_symbols.update(orphans)
-            raise RuntimeError(
-                "orphan exchange positions require manual reconciliation: "
-                + ", ".join(sorted(orphans))
+            if unresolved:
+                raise RuntimeError(
+                    "orphan exchange positions require manual reconciliation: "
+                    + ", ".join(sorted(unresolved))
+                )
+            logger.critical(
+                "🛑 Persisted orphan exchange positions as NEEDS_RECONCILIATION: %s",
+                ", ".join(sorted(orphans)),
             )
+
+    def _persist_orphan_position(
+        self, position: dict[str, Any], slot: dict[str, Any] | None
+    ) -> bool:
+        """Persist enough exchange facts to block an orphan safely without fake PnL."""
+        symbol = str(position.get("symbol") or "")
+        try:
+            entry_price = float(
+                position.get("entryPrice") or position.get("average") or 0.0
+            )
+            contracts = abs(float(
+                position.get("contracts") or position.get("positionAmt") or 0.0
+            ))
+            leverage = max(1, int(float(position.get("leverage") or 1)))
+        except (TypeError, ValueError):
+            return False
+        if not symbol or entry_price <= 0 or contracts <= 0:
+            logger.error("❌ Cannot persist orphan {} without entry price and quantity", symbol)
+            return False
+        direction = "SHORT" if str(position.get("side") or "").lower() in {"short", "sell"} else "LONG"
+        trade_id = str((slot or {}).get("trade_id") or f"orphan-{symbol}-{int(time.time())}")
+        record = {
+            "id": trade_id,
+            "symbol": symbol,
+            "direction": direction,
+            "mode": str(self.config.active_mode),
+            "strategy": "RECONCILIATION",
+            "exchange": self.config.exchange.primary_exchange(),
+            "entry_price": entry_price,
+            "entry_order_id": trade_id,
+            "entry_price_source": "unconfirmed",
+            "entry_quantity_source": "unconfirmed",
+            "entry_fee_source": "unconfirmed",
+            "pnl_source": "unconfirmed",
+            "size_usd": (entry_price * contracts) / leverage,
+            "margin_usd": (entry_price * contracts) / leverage,
+            "notional_usd": entry_price * contracts,
+            "entry_quantity": contracts,
+            "remaining_quantity": contracts,
+            "leverage": leverage,
+            "status": "NEEDS_RECONCILIATION",
+            "reconciliation_note": "orphan exchange position recovered during startup reconciliation",
+            "opened_at": datetime.now(timezone.utc).isoformat(),
+        }
+        return bool(self.state_manager.save_trade_state(record))
 
     async def process_market_cycle(self) -> None:
         logger.info(f"Market cycle: {datetime.now(timezone.utc).isoformat()}")
