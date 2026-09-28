@@ -184,6 +184,18 @@ class StateManager:
             "reconciliation_note": note,
         })
 
+    def record_partial_close(self, partial_data: Dict[str, Any]) -> bool:
+        """Persist a partial execution separately from the parent trade."""
+        if not self.client:
+            logger.error("❌ partial close cannot be persisted without Supabase")
+            return False
+        try:
+            self.client.table("partial_closes").insert(partial_data).execute()
+            return True
+        except Exception as e:
+            logger.error("❌ record_partial_close: {}", e)
+            return False
+
     def get_open_trades_from_db(self) -> List[Dict[str, Any]]:
         """استرجاع OPEN وNEEDS_RECONCILIATION معاً للمراجعة الآمنة."""
         if not self.client:

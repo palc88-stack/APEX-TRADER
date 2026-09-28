@@ -199,21 +199,56 @@ class ApexTraderBot:
                         )
                         try:
                             partial_amount = (pos_obj.size_usd * pos_obj.leverage / current_price) * (pct / 100.0)
-                            await self.exchange.reduce_only_close(
+                            partial_order = await self.exchange.reduce_only_close(
                                 symbol=symbol,
                                 amount=partial_amount,
                                 reason="tp1",
                             )
+                            partial_order_id = str(partial_order.get("id") or "")
+                            partial_fill = (
+                                await self.exchange.fetch_fill_details(partial_order_id, symbol)
+                                if partial_order_id else None
+                            )
+                            if (
+                                partial_fill is None
+                                or not partial_fill.is_pnl_eligible
+                                or pos.get("entry_fee_source") != "exchange_fill"
+                            ):
+                                self.state_manager.mark_trade_needs_reconciliation(
+                                    pos,
+                                    "partial close fill could not be confirmed from exchange",
+                                )
+                                self._reconciliation_blocked_symbols.add(symbol)
+                                raise RuntimeError("partial close requires reconciliation")
+
+                            partial_pnl = (
+                                (partial_fill.price - pos_obj.entry_price)
+                                * partial_fill.quantity
+                                if pos_obj.direction.value == "LONG"
+                                else (pos_obj.entry_price - partial_fill.price)
+                                * partial_fill.quantity
+                            ) - partial_fill.fee
+                            if not self.state_manager.record_partial_close({
+                                "trade_id": pos_obj.id,
+                                "reason": "tp1",
+                                "price": partial_fill.price,
+                                "amount_closed": partial_fill.quantity,
+                                "pnl": partial_pnl,
+                                "fee": partial_fill.fee,
+                                "price_source": partial_fill.price_source.value,
+                                "quantity_source": partial_fill.quantity_source.value,
+                                "fee_source": partial_fill.fee_source.value,
+                                "pnl_source": "exchange_fill",
+                                "exchange_order_id": partial_order_id,
+                            }):
+                                raise RuntimeError("partial close executed but persistence failed")
                         except Exception as partial_err:
                             logger.error(f"❌ فشل تنفيذ الإغلاق الجزئي (TP1) لـ {symbol}: {partial_err}")
                         else:
                             if not self.state_manager.save_trade_state({**pos, "tp1_executed": True}):
                                 raise RuntimeError("partial close executed but state persistence failed")
                             await self.telegram.send_partial_close(
-                                pos_obj, current_price, pct,
-                                partial_pnl=(current_price - pos_obj.entry_price) * pos_obj.size_usd * pos_obj.leverage / pos_obj.entry_price
-                                if pos_obj.direction.value == "LONG" else
-                                (pos_obj.entry_price - current_price) * pos_obj.size_usd * pos_obj.leverage / pos_obj.entry_price,
+                                pos_obj, partial_fill.price, pct, partial_pnl=partial_pnl,
                             )
 
                     elif action and action.get("action") == "close":
