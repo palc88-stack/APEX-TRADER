@@ -239,6 +239,8 @@ class StateManager:
                 take_profit_2=float(trade_dict.get("take_profit_2", 0)),
                 size_usd=float(trade_dict.get("size_usd", 0)),
                 leverage=int(trade_dict.get("leverage", 10)),
+                entry_quantity=float(trade_dict.get("entry_quantity", 0) or 0),
+                remaining_quantity=float(trade_dict.get("remaining_quantity", 0) or 0),
                 entry_fee=float(trade_dict.get("entry_fee", 0)),
                 exit_fee=float(trade_dict.get("exit_fee", 0)),
                 # ✅ استعادة حالة Trailing/BreakEven من DB

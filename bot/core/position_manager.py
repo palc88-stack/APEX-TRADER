@@ -52,6 +52,8 @@ class Position:
     # الحجم
     size_usd: float = 0.0
     leverage: int = 10
+    entry_quantity: float = 0.0
+    remaining_quantity: float = 0.0
     
     # العمولات
     entry_fee: float = 0.0
@@ -68,11 +70,29 @@ class Position:
     
     # TP1 تم تنفيذه؟
     tp1_executed: bool = False
+
+    def __post_init__(self) -> None:
+        if self.remaining_quantity <= 0 and self.entry_quantity > 0:
+            self.remaining_quantity = self.entry_quantity
     
     @property
     def position_value(self) -> float:
         """قيمة الصفقة الإجمالية"""
         return self.size_usd * self.leverage
+
+    @property
+    def remaining_notional(self) -> float:
+        if self.remaining_quantity > 0 and self.entry_price > 0:
+            return self.remaining_quantity * self.entry_price
+        return self.position_value
+
+    def apply_partial_close(self, quantity: float) -> None:
+        """Update local quantity after a confirmed exchange partial fill."""
+        if quantity <= 0:
+            return
+        if self.remaining_quantity <= 0:
+            self.remaining_quantity = self.entry_quantity or self.position_value / max(self.entry_price, 1.0)
+        self.remaining_quantity = max(self.remaining_quantity - quantity, 0.0)
     
     @property
     def duration_minutes(self) -> float:
@@ -93,7 +113,7 @@ class Position:
         if self.direction == TradeDirection.SHORT:
             price_change_pct = -price_change_pct
         
-        return self.position_value * price_change_pct
+        return self.remaining_notional * price_change_pct
     
     @property
     def unrealized_pnl_pct(self) -> float:
@@ -365,9 +385,7 @@ class PositionManager:
         if position.direction == TradeDirection.SHORT:
             price_change = -price_change
         
-        gross_pnl = (
-            price_change / position.entry_price * position.position_value
-        )
+        gross_pnl = price_change / position.entry_price * position.remaining_notional
         net_pnl = gross_pnl - position.entry_fee - position.exit_fee
         
         position.pnl = round(net_pnl, 4)

@@ -177,6 +177,10 @@ CREATE TABLE IF NOT EXISTS trades (
     take_profit_2 DECIMAL(18, 8),
 
     size_usd DECIMAL(18, 4) NOT NULL,
+    margin_usd DECIMAL(18, 4),
+    notional_usd DECIMAL(18, 4),
+    entry_quantity DECIMAL(18, 8),
+    remaining_quantity DECIMAL(18, 8),
     leverage INTEGER DEFAULT 10,
 
     entry_fee DECIMAL(18, 8) DEFAULT 0,
@@ -202,6 +206,11 @@ CREATE TABLE IF NOT EXISTS trades (
     opened_at TIMESTAMPTZ DEFAULT NOW(),
     closed_at TIMESTAMPTZ
 );
+
+ALTER TABLE trades ADD COLUMN IF NOT EXISTS margin_usd DECIMAL(18, 4);
+ALTER TABLE trades ADD COLUMN IF NOT EXISTS notional_usd DECIMAL(18, 4);
+ALTER TABLE trades ADD COLUMN IF NOT EXISTS entry_quantity DECIMAL(18, 8);
+ALTER TABLE trades ADD COLUMN IF NOT EXISTS remaining_quantity DECIMAL(18, 8);
 
 -- فهارس لتسريع الاستعلامات المتكررة فعلياً في الكود:
 -- state_manager.get_open_trades_from_db() → .eq("status","OPEN")
