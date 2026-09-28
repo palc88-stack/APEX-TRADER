@@ -18,14 +18,14 @@ jobs:
     timeout-minutes: 3
     env:
       PYTHONPATH: ${{ github.workspace }}
-      ENVIRONMENT: ${{ vars.ENVIRONMENT || 'production' }}
+      ENVIRONMENT: ${{ vars.ENVIRONMENT || 'testnet' }}
       BINANCE_TESTNET: ${{ vars.BINANCE_TESTNET || 'true' }}
       ALLOW_LIVE_TRADING: ${{ vars.ALLOW_LIVE_TRADING || 'false' }}
       TRADING_EXECUTION_ENABLED: "false"
       ALLOW_NEW_ENTRIES: "false"
       APEX_RUN_CYCLES: "1"
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-      SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+      SUPABASE_WRITE_KEY: ${{ secrets.SUPABASE_WRITE_KEY }}
       BINANCE_API_KEY: ${{ secrets.BINANCE_API_KEY }}
       BINANCE_SECRET_KEY: ${{ secrets.BINANCE_SECRET_KEY }}
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}

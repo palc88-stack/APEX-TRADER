@@ -26,7 +26,7 @@ jobs:
       TRADING_EXECUTION_ENABLED: "false"
       ALLOW_NEW_ENTRIES: "false"
       UNIVERSE_REFRESH_ONLY: "true"
-      UNIVERSE_SIZE: "20"
+      UNIVERSE_SIZE: "3"
       UNIVERSE_REFRESH_HOURS: "4"
       MAX_OPEN_POSITIONS: "3"
       APEX_RUN_CYCLES: "1"
