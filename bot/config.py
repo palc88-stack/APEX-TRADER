@@ -166,6 +166,17 @@ class TradingConfig:
         or ["BTC/USDT"]
     )
     timeframe: str = field(default_factory=lambda: _env_text("TRADING_TIMEFRAME", "5m"))
+    universe_size: int = field(default_factory=lambda: max(1, _env_int("UNIVERSE_SIZE", 20)))
+    universe_refresh_hours: int = field(
+        default_factory=lambda: max(1, _env_int("UNIVERSE_REFRESH_HOURS", 4))
+    )
+    universe_quote: str = field(default_factory=lambda: _env_text("UNIVERSE_QUOTE", "USDT").upper())
+    max_open_positions: int = field(
+        default_factory=lambda: max(1, _env_int("MAX_OPEN_POSITIONS", 3))
+    )
+    max_new_entries_per_cycle: int = field(
+        default_factory=lambda: max(1, _env_int("MAX_NEW_ENTRIES_PER_CYCLE", 1))
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
