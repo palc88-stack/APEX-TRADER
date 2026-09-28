@@ -76,11 +76,12 @@ class SignalEngine:
     def __init__(self, config: Optional[Any] = None):
         self.config = config
         cfg_dict = config.__dict__ if hasattr(config, "__dict__") else {}
+        self.active_mode = str(getattr(config, "active_mode", "HUNTER")).upper()
         self.indicator_calculator = IndicatorCalculator(cfg_dict)
         self.signal_filters = SignalFilters(cfg_dict)
         # ✅ ربط الـ strategies الآن داخل المحرك
         self.explosion_detector = ExplosionDetector()
-        self.scalping_strategy = ScalpingStrategy(cfg_dict)
+        self.scalping_strategy = ScalpingStrategy(config)
 
     def evaluate_market(
         self,
@@ -95,6 +96,7 @@ class SignalEngine:
             "symbol": symbol,
             "action": TradeDirection.HOLD,
             "strategy": None,
+            "mode": self.active_mode,
             "confidence": 0.0,
             "indicators": {},
             "reason": "No valid signal detected",
@@ -129,9 +131,15 @@ class SignalEngine:
             is_trend_bullish = close > ema_200
             is_trend_bearish = close < ema_200
 
+            # HUNTER is an aggregate mode: it enables the existing detectors
+            # without pretending that a separate Hunter strategy exists.
+            # Priority remains deterministic and every result keeps its source strategy.
+
             # ─ 1. ExplosionDetector: أعلى أولوية ─
-            explosion_signal = self.explosion_detector.detect(
-                df_analyzed, symbol
+            explosion_signal = (
+                self.explosion_detector.detect(df_analyzed, symbol)
+                if self.active_mode in {"HUNTER", "EXPLOSION"}
+                else None
             )
             if explosion_signal and explosion_signal.is_valid:
                 direction = "BUY" if explosion_signal.direction == "LONG" else "SELL"
@@ -139,6 +147,7 @@ class SignalEngine:
                     result.update({
                         "action": explosion_signal.direction,
                         "strategy": "EXPLOSION",
+                        "mode": self.active_mode,
                         "confidence": explosion_signal.confidence,
                         "reason": explosion_signal.reason
                     })
@@ -158,6 +167,7 @@ class SignalEngine:
                     result.update({
                         "action": action_dir,
                         "strategy": "SCALPING",
+                        "mode": self.active_mode,
                         "confidence": 0.80 if action_dir == "BUY" else 0.75,
                         "reason": scalp_result["reason"]
                     })
@@ -171,40 +181,44 @@ class SignalEngine:
                     return result
 
             # ─ Scalping: أولوية لاستراتيجية البولنجر ─
-            if close <= bb_lower and rsi < 35:
+            if self.active_mode in {"HUNTER", "SCALPING"} and close <= bb_lower and rsi < 35:
                 if self.signal_filters.validate_signal("BUY", latest):
                     result.update({
                         "action": TradeDirection.LONG,
                         "strategy": "SCALPING_BUY",
+                        "mode": self.active_mode,
                         "confidence": 0.80,
                         "reason": "Lower BB touch + RSI oversold.",
                     })
                     return result
 
-            elif close >= bb_upper and rsi > 65:
+            elif self.active_mode in {"HUNTER", "SCALPING"} and close >= bb_upper and rsi > 65:
                 if self.signal_filters.validate_signal("SELL", latest):
                     result.update({
                         "action": TradeDirection.SHORT,
                         "strategy": "SCALPING_SELL",
+                        "mode": self.active_mode,
                         "confidence": 0.80,
                         "reason": "Upper BB touch + RSI overbought.",
                     })
                     return result
 
             # ─ Trend Bounce: استراتيجية الاتجاه ─
-            if is_trend_bullish and rsi < 40:
+            if self.active_mode == "HUNTER" and is_trend_bullish and rsi < 40:
                 if self.signal_filters.validate_signal("BUY", latest):
                     result.update({
                         "action": TradeDirection.LONG,
                         "strategy": "TREND_BOUNCE",
+                        "mode": self.active_mode,
                         "confidence": 0.85,
                         "reason": "Bullish trend pullback + RSI oversold.",
                     })
-            elif is_trend_bearish and rsi > 60:
+            elif self.active_mode == "HUNTER" and is_trend_bearish and rsi > 60:
                 if self.signal_filters.validate_signal("SELL", latest):
                     result.update({
                         "action": TradeDirection.SHORT,
                         "strategy": "TREND_PULLBACK",
+                        "mode": self.active_mode,
                         "confidence": 0.85,
                         "reason": "Bearish trend rally + RSI overbought.",
                     })

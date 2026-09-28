@@ -151,10 +151,26 @@ CREATE TABLE IF NOT EXISTS trades (
     symbol VARCHAR(20) NOT NULL,
     direction VARCHAR(10) NOT NULL,             -- LONG | SHORT
     mode VARCHAR(20),                           -- ✅ تُقرأ من App.jsx SELECT
+    strategy VARCHAR(40),
+    signal_confidence DECIMAL(6, 4),
+    signal_reason TEXT,
     exchange VARCHAR(20) DEFAULT 'binance',
     source VARCHAR(20) DEFAULT 'engine',        -- 'engine' أو 'webhook'
 
     entry_price DECIMAL(18, 8) NOT NULL,
+    entry_order_id TEXT,
+    entry_client_order_id TEXT,
+    stop_algo_id TEXT,
+    take_profit_algo_id TEXT,
+    closing_order_id TEXT,
+    entry_price_source VARCHAR(40) NOT NULL DEFAULT 'unconfirmed',
+    entry_quantity_source VARCHAR(40) NOT NULL DEFAULT 'unconfirmed',
+    entry_fee_source VARCHAR(40) NOT NULL DEFAULT 'unconfirmed',
+    exit_price_source VARCHAR(40) NOT NULL DEFAULT 'unconfirmed',
+    exit_quantity_source VARCHAR(40) NOT NULL DEFAULT 'unconfirmed',
+    exit_fee_source VARCHAR(40) NOT NULL DEFAULT 'unconfirmed',
+    pnl_source VARCHAR(40) NOT NULL DEFAULT 'unconfirmed',
+    reconciliation_note TEXT,
     exit_price DECIMAL(18, 8),
     stop_loss DECIMAL(18, 8),
     take_profit_1 DECIMAL(18, 8),
@@ -168,7 +184,7 @@ CREATE TABLE IF NOT EXISTS trades (
 
     confidence DECIMAL(5, 4) DEFAULT 0,
 
-    status VARCHAR(20) DEFAULT 'OPEN',          -- OPEN | CLOSED
+    status VARCHAR(20) DEFAULT 'OPEN',          -- OPEN | CLOSED | NEEDS_RECONCILIATION
     close_reason VARCHAR(30),                   -- tp1 | tp2 | stop_loss | trailing_stop | manual
 
     pnl DECIMAL(18, 4) DEFAULT 0,
@@ -194,6 +210,33 @@ CREATE INDEX IF NOT EXISTS idx_trades_status ON trades (status);
 CREATE INDEX IF NOT EXISTS idx_trades_opened_at ON trades (opened_at DESC);
 -- main.py → فلترة الصفقات المفتوحة حسب الرمز في كل دورة
 CREATE INDEX IF NOT EXISTS idx_trades_symbol_status ON trades (symbol, status);
+
+CREATE TABLE IF NOT EXISTS partial_closes (
+    id BIGSERIAL PRIMARY KEY,
+    trade_id TEXT NOT NULL REFERENCES trades(id) ON DELETE CASCADE,
+    reason VARCHAR(30) NOT NULL,
+    price DECIMAL(18, 8),
+    amount_closed DECIMAL(18, 8),
+    pnl DECIMAL(18, 4),
+    fee DECIMAL(18, 8),
+    price_source VARCHAR(40) NOT NULL DEFAULT 'unconfirmed',
+    quantity_source VARCHAR(40) NOT NULL DEFAULT 'unconfirmed',
+    fee_source VARCHAR(40) NOT NULL DEFAULT 'unconfirmed',
+    pnl_source VARCHAR(40) NOT NULL DEFAULT 'unconfirmed',
+    exchange_order_id TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_partial_closes_trade_id
+    ON partial_closes (trade_id, created_at DESC);
+ALTER TABLE trades DROP CONSTRAINT IF EXISTS trades_status_check;
+ALTER TABLE trades ADD CONSTRAINT trades_status_check
+    CHECK (status IN ('OPEN', 'CLOSED', 'NEEDS_RECONCILIATION'));
+ALTER TABLE partial_closes ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS authenticated_read_partial_closes ON partial_closes;
+CREATE POLICY authenticated_read_partial_closes ON partial_closes
+    FOR SELECT TO authenticated USING (true);
+REVOKE ALL ON TABLE partial_closes FROM anon, authenticated;
+GRANT SELECT ON TABLE partial_closes TO authenticated;
 
 -- ===== Idempotency, bounded state transitions, and RLS =====
 ALTER TABLE pending_signals ENABLE ROW LEVEL SECURITY;

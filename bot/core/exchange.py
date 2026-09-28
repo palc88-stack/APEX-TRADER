@@ -14,6 +14,8 @@ import ccxt.async_support as ccxt
 import pandas as pd
 from loguru import logger
 
+from bot.core.provenance import FillDetails, FieldSource, QueryResult
+
 
 class ExchangeSafetyError(RuntimeError):
     """Raised when an order would violate a local safety invariant."""
@@ -100,10 +102,82 @@ class ExchangeManager:
                 value = ticker.get(name)
                 return float(value) if value is not None and math.isfinite(float(value)) else 0.0
 
-            return {"last": number("last"), "bid": number("bid"), "ask": number("ask")}
+            return {
+                "last": number("last"),
+                "bid": number("bid"),
+                "ask": number("ask"),
+                "source": FieldSource.EXCHANGE_MARKET_DATA.value,
+            }
         except Exception as exc:
             logger.error("get_ticker {} failed: {}", symbol, exc)
-            return {"last": 0.0, "bid": 0.0, "ask": 0.0}
+            return {
+                "last": 0.0,
+                "bid": 0.0,
+                "ask": 0.0,
+                "source": FieldSource.UNCONFIRMED.value,
+            }
+
+    async def fetch_fill_details(self, order_id: str, symbol: str) -> FillDetails:
+        """Resolve execution facts without substituting ticker prices."""
+        exchange = await self._ensure_ready()
+        order: Dict[str, Any] = {}
+        try:
+            order = await exchange.fetch_order(str(order_id), symbol)
+        except Exception as exc:
+            logger.warning("fetch_order failed for {}: {}", order_id, exc)
+
+        filled = float(order.get("filled") or 0.0)
+        average = float(order.get("average") or order.get("price") or 0.0)
+        price_source = FieldSource.EXCHANGE_FILL if average > 0 else FieldSource.UNCONFIRMED
+        quantity_source = FieldSource.EXCHANGE_FILL if filled > 0 else FieldSource.UNCONFIRMED
+        fee = 0.0
+        fee_source = FieldSource.UNCONFIRMED
+        trade_ids: list[str] = []
+
+        fee_info = order.get("fee") or {}
+        fee_currency = str(fee_info.get("currency") or "").upper()
+        fee_cost = float(fee_info.get("cost") or 0.0)
+        if fee_cost >= 0 and fee_currency in {"USDT", "BUSD"}:
+            fee, fee_source = fee_cost, FieldSource.EXCHANGE_FILL
+        else:
+            try:
+                trades = await exchange.fetch_my_trades(symbol, limit=100)
+                related = [t for t in trades if str(t.get("order") or "") == str(order_id)]
+                if related:
+                    currencies = {
+                        str((t.get("fee") or {}).get("currency") or "").upper()
+                        for t in related
+                    }
+                    if currencies.issubset({"USDT", "BUSD"}):
+                        fee = sum(float((t.get("fee") or {}).get("cost") or 0.0) for t in related)
+                        fee_source = FieldSource.EXCHANGE_FILL
+                    trade_ids = [str(t.get("id")) for t in related if t.get("id")]
+            except Exception as exc:
+                logger.warning("fetch_my_trades failed for {}: {}", order_id, exc)
+
+        return FillDetails(
+            price=average,
+            price_source=price_source,
+            quantity=filled,
+            quantity_source=quantity_source,
+            fee=fee,
+            fee_source=fee_source,
+            order_id=str(order_id),
+            trade_ids=tuple(trade_ids),
+        )
+
+    async def get_all_open_positions_result(self) -> QueryResult:
+        """Distinguish an empty account from a failed position query."""
+        try:
+            exchange = await self._ensure_ready()
+            positions = await exchange.fetch_positions()
+            open_positions = [
+                p for p in positions if abs(float(p.get("contracts") or 0)) > 0
+            ]
+            return QueryResult.from_items(open_positions)
+        except Exception as exc:
+            logger.critical("fetch_positions failed: {}", exc)
+            return QueryResult.failed(exc)
 
     async def get_balance(self) -> float:
         try:

@@ -47,6 +47,7 @@ class ApexTraderBot:
         self._daily_loss_used = 0.0
         self._daily_realized_pnl = 0.0
         self._current_balance = 0.0
+        self._reconciliation_blocked_symbols: set[str] = set()
 
     # ✅ إصلاح: Heartbeat عبر StateManager
     async def start_heartbeat_loop(self, interval_seconds: int = 10):
@@ -79,6 +80,7 @@ class ApexTraderBot:
     async def initialize(self) -> None:
         logger.info("Initializing ApexTrader...")
         await self.state_manager.load_initial_state()
+        await self._reconcile_before_trading()
 
         # ✅ فحص اتصال Supabase - إذا فشل، نكتب في واجهة مستقلة
         balance = await self.exchange.get_balance()
@@ -106,6 +108,42 @@ class ApexTraderBot:
             mode=str(self.config.active_mode)
         )
 
+    async def _reconcile_before_trading(self) -> None:
+        """Fail closed when local and exchange positions do not match."""
+        local = self.state_manager.get_open_trades_from_db()
+        self._reconciliation_blocked_symbols = {
+            str(trade.get("symbol")) for trade in local
+            if trade.get("status") == "NEEDS_RECONCILIATION" and trade.get("symbol")
+        }
+        result = await self.exchange.get_all_open_positions_result()
+        if not result.ok:
+            raise RuntimeError("cannot reconcile exchange positions: " + str(result.error))
+
+        local_open = {
+            str(trade.get("symbol")): trade for trade in local
+            if trade.get("status") == "OPEN" and trade.get("symbol")
+        }
+        exchange_symbols = {
+            str(position.get("symbol")) for position in result.data
+            if position.get("symbol")
+        }
+        for symbol, trade in local_open.items():
+            if symbol not in exchange_symbols:
+                self.state_manager.mark_trade_needs_reconciliation(
+                    trade,
+                    "local OPEN trade missing from exchange during startup reconciliation",
+                )
+                self._reconciliation_blocked_symbols.add(symbol)
+
+        local_symbols = set(local_open) | self._reconciliation_blocked_symbols
+        orphans = exchange_symbols - local_symbols
+        if orphans:
+            self._reconciliation_blocked_symbols.update(orphans)
+            raise RuntimeError(
+                "orphan exchange positions require manual reconciliation: "
+                + ", ".join(sorted(orphans))
+            )
+
     async def process_market_cycle(self) -> None:
         logger.info(f"Market cycle: {datetime.now(timezone.utc).isoformat()}")
 
@@ -113,6 +151,9 @@ class ApexTraderBot:
         for symbol in self.config.trading.symbols:
             try:
                 # 1. جلب البيانات
+                if symbol in self._reconciliation_blocked_symbols:
+                    logger.critical("🛑 %s محجوب حتى إتمام المصالحة اليدوية", symbol)
+                    continue
                 candles = await self.market_data.get_ohlcv(
                     symbol, self.config.trading.timeframe
                 )
@@ -128,7 +169,8 @@ class ApexTraderBot:
                 # 2. إدارة المراكز المفتوحة
                 open_positions = self.state_manager.get_open_trades_from_db()
                 symbol_positions = [
-                    p for p in open_positions if p.get("symbol") == symbol
+                    p for p in open_positions
+                    if p.get("symbol") == symbol and p.get("status") == "OPEN"
                 ]
 
                 for pos in symbol_positions:
@@ -182,14 +224,42 @@ class ApexTraderBot:
                             price=current_price
                         )
 
+                        close_order_id = str(order.get("id") or "")
+                        fill = (
+                            await self.exchange.fetch_fill_details(close_order_id, symbol)
+                            if close_order_id else None
+                        )
+                        if (
+                            fill is None
+                            or not fill.is_pnl_eligible
+                            or pos.get("entry_fee_source") != "exchange_fill"
+                        ):
+                            logger.critical(
+                                "🛑 إغلاق {} بلا Fill مؤكد؛ لن يُحتسب PnL وسيحتاج إلى مصالحة.",
+                                symbol,
+                            )
+                            self.state_manager.save_trade_state({
+                                **pos,
+                                "status": "NEEDS_RECONCILIATION",
+                                "closing_order_id": close_order_id or None,
+                                "exit_price_source": "unconfirmed",
+                                "exit_quantity_source": "unconfirmed",
+                                "exit_fee_source": "unconfirmed",
+                                "pnl_source": "unconfirmed",
+                                "reconciliation_note": "close fill could not be confirmed from exchange",
+                                "closed_at": datetime.now(timezone.utc).isoformat(),
+                            })
+                            continue
+
                         # ✅ إصلاح خلل حرج (مؤكَّد): close_position() في
                         # PositionManager (الذي يحسب pnl الفعلي) لم يكن يُستدعى
                         # أبداً — النتيجة: pnl محفوظ دائماً = 0 في القاعدة
                         # وفي إشعار Telegram، و_daily_realized_pnl/_daily_loss_used
                         # لا يتحدّثان أبداً، ما يجعل "حد الخسارة اليومي" مجرد رقم
                         # عرض بلا أي تفعيل فعلي.
+                        pos_obj.exit_fee = fill.fee
                         closed_pos = self.position_manager.close_position(
-                            pos_obj.id, current_price, action.get("reason", "manual")
+                            pos_obj.id, fill.price, action.get("reason", "manual")
                         )
                         realized_pnl = closed_pos.pnl if closed_pos else 0.0
 
@@ -200,7 +270,13 @@ class ApexTraderBot:
                         self.state_manager.save_trade_state({
                             **pos,
                             "status": "CLOSED",
-                            "exit_price": current_price,
+                            "exit_price": fill.price,
+                            "closing_order_id": close_order_id,
+                            "exit_price_source": fill.price_source.value,
+                            "exit_quantity_source": fill.quantity_source.value,
+                            "exit_fee_source": fill.fee_source.value,
+                            "pnl_source": "exchange_fill",
+                            "exit_fee": fill.fee,
                             "close_reason": action.get("reason"),
                             "pnl": realized_pnl,
                             "pnl_pct": closed_pos.pnl_pct if closed_pos else 0.0,
@@ -291,20 +367,37 @@ class ApexTraderBot:
                     client_order_id=f"apex-{symbol.replace('/', '')}-{int(time.time() * 1000)}",
                 )
 
+                entry_order_id = str(order.get("id") or "")
+                entry_fill = (
+                    await self.exchange.fetch_fill_details(entry_order_id, symbol)
+                    if entry_order_id else None
+                )
+                protection_ids = [str(value) for value in order.get("protection_order_ids", [])]
+
                 # 6. حفظ الصفقة
                 fee_result = self.fee_calculator.calculate(
                     position_size=size_usd * leverage
                 )
                 trade_record = {
-                    "id": order.get("id", ""),
+                    "id": entry_order_id,
                     "symbol": symbol,
                     "direction": str(action_val).upper(),
                     # ✅ إصلاح: عمود "mode" مطلوب من App.jsx (لوحة المتابعة) في
                     # استعلام SELECT الخاص بجدول trades ولم يكن يُحفَظ أبداً —
                     # كان سيسبب فراغاً دائماً في هذا العمود بالواجهة.
                     "mode": str(self.config.active_mode),
+                    "strategy": signal_result.get("strategy") or "UNKNOWN",
+                    "signal_confidence": signal_result.get("confidence", 0.0),
+                    "signal_reason": signal_result.get("reason", ""),
                     "exchange": self.config.exchange.primary_exchange(),
                     "entry_price": entry_price,
+                    "entry_order_id": entry_order_id,
+                    "entry_client_order_id": order.get("clientOrderId"),
+                    "stop_algo_id": protection_ids[0] if len(protection_ids) > 0 else None,
+                    "take_profit_algo_id": protection_ids[1] if len(protection_ids) > 1 else None,
+                    "entry_price_source": entry_fill.price_source.value if entry_fill else "unconfirmed",
+                    "entry_quantity_source": entry_fill.quantity_source.value if entry_fill else "unconfirmed",
+                    "entry_fee_source": entry_fill.fee_source.value if entry_fill else "unconfirmed",
                     "stop_loss": stop_loss,
                     "take_profit_1": take_profit_1,
                     "take_profit_2": take_profit_2,

@@ -175,15 +175,24 @@ class StateManager:
             logger.error("❌ save_trade_state: {}", e)
             return False
 
+    def mark_trade_needs_reconciliation(self, trade: Dict[str, Any], note: str) -> bool:
+        """تجميد الصفقة عندما لا يمكن مطابقة الحالة المحلية مع المنصة."""
+        return self.save_trade_state({
+            **trade,
+            "status": "NEEDS_RECONCILIATION",
+            "pnl_source": "unconfirmed",
+            "reconciliation_note": note,
+        })
+
     def get_open_trades_from_db(self) -> List[Dict[str, Any]]:
-        """استرجاع الصفقات المفتوحة من Supabase."""
+        """استرجاع OPEN وNEEDS_RECONCILIATION معاً للمراجعة الآمنة."""
         if not self.client:
             return []
         try:
             res = (
                 self.client.table("trades")
                 .select("*")
-                .eq("status", "OPEN")
+                .in_("status", ["OPEN", "NEEDS_RECONCILIATION"])
                 .execute()
             )
             return res.data if res and hasattr(res, "data") else []

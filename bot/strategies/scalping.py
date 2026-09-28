@@ -12,8 +12,24 @@ class ScalpingStrategy:
 
     def __init__(self, config: Optional[Dict[str, Any]] = None):
         self.config = config or {}
-        self.target_profit_pct = float(self.config.get("scalp_take_profit_pct", 0.005))  # 0.5%
-        self.max_stop_loss_pct = float(self.config.get("scalp_stop_loss_pct", 0.003))    # 0.3%
+        getter = getattr(self.config, "get", None)
+        if callable(getter):
+            tp = getter("scalp_take_profit_pct", None)
+            sl = getter("scalp_stop_loss_pct", None)
+            if tp is None or sl is None:
+                risk = getattr(self.config, "risk", None)
+                tp = getattr(risk, "scalp_take_profit_pct", tp)
+                sl = getattr(risk, "scalp_stop_loss_pct", sl)
+        else:
+            tp = getattr(self.config, "risk", None)
+            tp = getattr(tp, "scalp_take_profit_pct", None)
+            sl = getattr(getattr(self.config, "risk", None), "scalp_stop_loss_pct", None)
+        self.target_profit_pct = float(
+            tp if tp is not None else 0.005
+        )
+        self.max_stop_loss_pct = float(
+            sl if sl is not None else 0.003
+        )
 
     def evaluate_scalp_setup(self, df: pd.DataFrame, symbol: str) -> Dict[str, Any]:
         """

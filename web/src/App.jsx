@@ -191,9 +191,9 @@ function Dashboard() {
       supabase
         .from("trades")
         .select(
-          "id,symbol,direction,mode,entry_price,exit_price,stop_loss," +
+          "id,symbol,direction,mode,strategy,entry_price,exit_price,stop_loss," +
             "take_profit_1,take_profit_2,size_usd,leverage,pnl,pnl_pct," +
-            "status,close_reason,opened_at,closed_at,duration_minutes"
+            "status,close_reason,pnl_source,opened_at,closed_at,duration_minutes"
         )
         .order("opened_at", { ascending: false })
         .limit(200),

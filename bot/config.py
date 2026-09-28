@@ -136,6 +136,8 @@ class RiskConfig:
     min_confidence: float = field(default_factory=lambda: _env_float("MIN_CONFIDENCE", 0.65))
     breakeven_pct: float = field(default_factory=lambda: _env_float("BREAKEVEN_PCT", 0.15))
     trailing_activation_pct: float = field(default_factory=lambda: _env_float("TRAILING_ACTIVATION_PCT", 0.30))
+    scalp_take_profit_pct: float = field(default_factory=lambda: _env_float("SCALP_TAKE_PROFIT_PCT", 0.005))
+    scalp_stop_loss_pct: float = field(default_factory=lambda: _env_float("SCALP_STOP_LOSS_PCT", 0.003))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
