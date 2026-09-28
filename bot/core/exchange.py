@@ -272,6 +272,44 @@ class ExchangeManager:
             logger.error("get_ohlcv {} failed: {}", symbol, exc)
             return None
 
+    async def get_top_usdt_perpetual_symbols(
+        self,
+        limit: int = 3,
+        min_quote_volume_usdt: float = 5_000_000.0,
+        base_symbols: Optional[list[str]] = None,
+    ) -> list[str]:
+        """Return active USDT perpetuals ranked by real exchange quote volume."""
+        exchange = await self._ensure_ready()
+        max_symbols = max(0, int(limit))
+        base = list(dict.fromkeys(
+            str(symbol).upper().replace(":USDT", "")
+            for symbol in (base_symbols or [])
+        ))
+        try:
+            tickers = await exchange.fetch_tickers()
+            candidates: list[tuple[str, float]] = []
+            for market_symbol, ticker in tickers.items():
+                market = exchange.markets.get(market_symbol) or {}
+                if not (
+                    market.get("active", True)
+                    and market.get("swap")
+                    and market.get("linear")
+                    and str(market.get("quote", "")).upper() == "USDT"
+                ):
+                    continue
+                quote_volume = float(ticker.get("quoteVolume") or 0.0)
+                if not math.isfinite(quote_volume) or quote_volume < min_quote_volume_usdt:
+                    continue
+                canonical = str(market.get("symbol") or market_symbol).upper().replace(":USDT", "")
+                candidates.append((canonical, quote_volume))
+            candidates.sort(key=lambda item: item[1], reverse=True)
+            selected = [symbol for symbol, _ in candidates]
+            final_symbols = list(dict.fromkeys([*base, *selected]))
+            return final_symbols[:max_symbols]
+        except Exception as exc:
+            logger.error("top USDT perpetual scan failed: {}", exc)
+            return base[:max_symbols]
+
     async def _set_leverage(self, symbol: str, leverage: int) -> None:
         self._assert_execution_allowed("set_leverage", new_entry=True)
         exchange = await self._ensure_ready()

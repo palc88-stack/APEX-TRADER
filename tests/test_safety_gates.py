@@ -118,3 +118,11 @@ def test_workflow_has_no_schedule_or_live_secret():
     assert 'BINANCE_TESTNET: "true"' in workflow
     assert 'TRADING_EXECUTION_ENABLED: "false"' in workflow
     assert 'ALLOW_NEW_ENTRIES: "false"' in workflow
+
+
+def test_testnet_session_scans_required_symbols_by_real_volume():
+    workflow = (ROOT / ".github/workflows/testnet-session.yml").read_text()
+    assert "TRADING_SYMBOLS: BTC/USDT,ETH/USDT,SOL/USDT" in workflow
+    assert 'AUTO_SYMBOL_SCAN: "true"' in workflow
+    assert 'SYMBOL_SCAN_LIMIT: "3"' in workflow
+    assert 'MIN_QUOTE_VOLUME_USDT: "5000000"' in workflow

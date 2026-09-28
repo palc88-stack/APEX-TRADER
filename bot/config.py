@@ -166,7 +166,7 @@ class TradingConfig:
         or ["BTC/USDT"]
     )
     timeframe: str = field(default_factory=lambda: _env_text("TRADING_TIMEFRAME", "5m"))
-    universe_size: int = field(default_factory=lambda: max(1, _env_int("UNIVERSE_SIZE", 20)))
+    universe_size: int = field(default_factory=lambda: max(1, _env_int("UNIVERSE_SIZE", 3)))
     universe_refresh_hours: int = field(
         default_factory=lambda: max(1, _env_int("UNIVERSE_REFRESH_HOURS", 4))
     )
@@ -177,6 +177,10 @@ class TradingConfig:
     max_new_entries_per_cycle: int = field(
         default_factory=lambda: max(1, _env_int("MAX_NEW_ENTRIES_PER_CYCLE", 1))
     )
+    auto_symbol_scan: bool = field(default_factory=lambda: _env_bool("AUTO_SYMBOL_SCAN", False))
+    symbol_scan_limit: int = field(default_factory=lambda: _env_int("SYMBOL_SCAN_LIMIT", 3))
+    min_quote_volume_usdt: float = field(default_factory=lambda: _env_float("MIN_QUOTE_VOLUME_USDT", 5_000_000.0))
+    symbol_scan_interval_seconds: int = field(default_factory=lambda: _env_int("SYMBOL_SCAN_INTERVAL_SECONDS", 900))
 
 
 # ─────────────────────────────────────────────────────────────────────────────

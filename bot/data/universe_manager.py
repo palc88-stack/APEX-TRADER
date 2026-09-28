@@ -121,12 +121,13 @@ class UniverseManager:
         return list(self._symbols)
 
     def get_symbols_for_cycle(self, open_symbols: Iterable[str] = ()) -> list[str]:
-        symbols = list(dict.fromkeys(self._symbols or self._configured_symbols()))
-        for symbol in open_symbols:
-            normalized = str(symbol).upper()
-            if normalized and normalized not in symbols:
-                symbols.append(normalized)
-        return symbols
+        # Open positions take priority so risk management is never skipped;
+        # remaining slots are filled from the volume-ranked universe.
+        opened = list(dict.fromkeys(
+            str(symbol).upper() for symbol in open_symbols if str(symbol).strip()
+        ))
+        universe = list(dict.fromkeys(self._symbols or self._configured_symbols()))
+        return list(dict.fromkeys([*opened, *universe]))[: self.universe_size]
 
     def snapshot(self) -> list[dict[str, Any]]:
         return [

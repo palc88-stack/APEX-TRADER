@@ -56,6 +56,7 @@ class ApexTraderBot:
         self._current_balance = 0.0
         self._reconciliation_blocked_symbols: set[str] = set()
         self._slot_owner = f"apex-{os.getpid()}-{uuid.uuid4().hex[:12]}"
+        self._last_symbol_scan_at = 0.0
 
     # ✅ إصلاح: Heartbeat عبر StateManager
     async def start_heartbeat_loop(self, interval_seconds: int = 10):
@@ -250,6 +251,19 @@ class ApexTraderBot:
 
     async def process_market_cycle(self) -> None:
         logger.info(f"Market cycle: {datetime.now(timezone.utc).isoformat()}")
+
+        if self.config.trading.auto_symbol_scan:
+            now = time.time()
+            if now - self._last_symbol_scan_at >= self.config.trading.symbol_scan_interval_seconds:
+                scanned = await self.exchange.get_top_usdt_perpetual_symbols(
+                    limit=self.config.trading.symbol_scan_limit,
+                    min_quote_volume_usdt=self.config.trading.min_quote_volume_usdt,
+                    base_symbols=self.config.trading.symbols,
+                )
+                if scanned:
+                    self.config.trading.symbols = scanned
+                    logger.info("🔎 رموز المسح الحجمي الحالية: {}", ", ".join(scanned))
+                self._last_symbol_scan_at = now
 
         cycle_errors: list[str] = []
         await self.universe_manager.refresh_if_due()

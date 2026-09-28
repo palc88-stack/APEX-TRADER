@@ -57,7 +57,7 @@ async def test_universe_refreshes_and_limits_symbols():
     assert exchange.calls == 1
     assert len(state.snapshots) == 1
     assert manager.get_symbols_for_cycle(["DOGE/USDT"]) == [
-        "BTC/USDT", "ETH/USDT", "SOL/USDT", "DOGE/USDT"
+        "DOGE/USDT", "BTC/USDT", "ETH/USDT"
     ]
 
 
