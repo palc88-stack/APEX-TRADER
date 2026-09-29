@@ -6,6 +6,18 @@
   "observability": {
     "enabled": true
   },
+  "triggers": {
+    "crons": [
+      "*/5 * * * *",
+      "0 */4 * * *",
+      "0 2 * * *"
+    ]
+  },
+  "vars": {
+    "UNIVERSE_SIZE": "20",
+    "BINANCE_BASE_URL": "https://testnet.binancefuture.com",
+    "ALLOW_LIVE_CRON": "false"
+  },
   "assets": {
     "directory": "web/dist",
     "binding": "ASSETS",
