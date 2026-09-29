@@ -183,9 +183,9 @@ function Dashboard() {
 
     const [statusResult, tradesResult] = await Promise.all([
       supabase
-        .from("bot_state")
+        .from("dashboard_risk_state")
         .select("*")
-        .eq("id", 1)
+        .limit(1)
         .maybeSingle(),
 
       supabase
