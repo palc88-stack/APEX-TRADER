@@ -75,6 +75,16 @@ def test_worker_has_no_service_key_fallback():
     assert "WEBHOOK_SECRET" not in worker
 
 
+def test_worker_monitors_all_unresolved_pairs_without_execution():
+    worker = (ROOT / "src/worker.js").read_text()
+    assert "status=eq.NEEDS_RECONCILIATION" in worker
+    assert "getUnresolvedTrades" in worker
+    assert "needs_reconciliation:" in worker
+    assert "لم يتم تعديل أوامر تلقائيًا" in worker
+    assert "place_order" not in worker
+    assert "close_position" not in worker
+
+
 @pytest.mark.asyncio
 async def test_binance_protection_uses_algo_order_api():
     class FakeExchange:

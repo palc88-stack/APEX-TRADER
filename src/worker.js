@@ -116,6 +116,13 @@ async function getOpenDbTrades(env) {
   return supabaseRequest(env, "trades?select=id,symbol,status,entry_quantity,remaining_quantity,entry_order_id,reconciliation_note&status=in.(OPEN,NEEDS_RECONCILIATION)&limit=100");
 }
 
+async function getUnresolvedTrades(env) {
+  return supabaseRequest(
+    env,
+    "trades?select=id,symbol,status,entry_order_id,reconciliation_note&status=eq.NEEDS_RECONCILIATION&order=symbol.asc&limit=100"
+  );
+}
+
 async function reconcileDaily(env) {
   const [dbTrades, exchangePositions, slots] = await Promise.all([
     getOpenDbTrades(env),
@@ -217,10 +224,11 @@ async function refreshUniverse(env) {
 }
 
 async function monitor(env) {
-  const [risk, reconciliation, summary] = await Promise.all([
+  const [risk, reconciliation, summary, unresolved] = await Promise.all([
     supabaseRequest(env, "dashboard_risk_state?select=*&limit=1"),
     supabaseRequest(env, "dashboard_reconciliation_status?select=*&limit=1"),
     supabaseRequest(env, "dashboard_trade_summary?select=*&limit=1"),
+    getUnresolvedTrades(env),
   ]);
   const state = risk?.[0] || null;
   const recon = reconciliation?.[0] || null;
@@ -232,8 +240,28 @@ async function monitor(env) {
     heartbeat_at: state?.heartbeat_at || null,
     reconciliation_status: recon?.status || "unknown",
     confirmed_realized_pnl: summary?.[0]?.confirmed_realized_pnl ?? null,
+    unresolved_pairs: (unresolved || []).map((trade) => ({
+      id: trade.id,
+      symbol: trade.symbol,
+      status: trade.status,
+      entry_order_id: trade.entry_order_id,
+    })),
   };
   console.log(JSON.stringify(result));
+  if (unresolved?.length) {
+    const pairs = unresolved.slice(0, 30).map((trade) =>
+      `• ${trade.symbol} | trade=${trade.id} | order=${trade.entry_order_id || "n/a"}`
+    ).join("\n");
+    const stateKey = unresolved.map((trade) => `${trade.symbol}:${trade.id}`).join(",");
+    await sendDedupedMonitorAlert(
+      env,
+      `needs_reconciliation:${stateKey}`,
+      "⬡ <b>APEX TRADER - مصالحة معلقة</b>\n\n" +
+      `🚨 <b>${unresolved.length} زوج/أزواج تحتاج مراجعة</b>\n` +
+      `${pairs}\n\n` +
+      "⛔ الدخول الجديد محجوب لهذه الحالات فقط؛ لم يتم تعديل أوامر تلقائيًا."
+    );
+  }
   const heartbeatMs = state?.heartbeat_at ? Date.parse(state.heartbeat_at) : NaN;
   if (!Number.isFinite(heartbeatMs) || Date.now() - heartbeatMs > 10 * 60 * 1000) {
     await sendDedupedMonitorAlert(
