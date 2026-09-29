@@ -196,10 +196,24 @@ async function refreshUniverse(env) {
 }
 
 async function monitor(env) {
-  const state = await supabaseRequest(env, "bot_state?select=id,bot_status,heartbeat_at,last_run_at,last_error& id=eq.1&limit=1".replace("& id", "&id"));
-  const unresolved = await supabaseRequest(env, "trades?select=id,symbol,status&status=eq.NEEDS_RECONCILIATION&limit=100");
-  console.log(JSON.stringify({ event: "monitor", state: state?.[0] || null, unresolved_count: unresolved?.length || 0 }));
-  return { unresolved_count: unresolved?.length || 0, state: state?.[0] || null };
+  const [risk, reconciliation, summary] = await Promise.all([
+    supabaseRequest(env, "dashboard_risk_state?select=*&limit=1"),
+    supabaseRequest(env, "dashboard_reconciliation_status?select=*&limit=1"),
+    supabaseRequest(env, "dashboard_trade_summary?select=*&limit=1"),
+  ]);
+  const state = risk?.[0] || null;
+  const recon = reconciliation?.[0] || null;
+  const result = {
+    event: "monitor",
+    entry_gate: state?.entry_gate || "unknown",
+    active_slots: state?.active_slots ?? null,
+    unresolved_count: state?.unresolved_trades ?? null,
+    heartbeat_at: state?.heartbeat_at || null,
+    reconciliation_status: recon?.status || "unknown",
+    confirmed_realized_pnl: summary?.[0]?.confirmed_realized_pnl ?? null,
+  };
+  console.log(JSON.stringify(result));
+  return result;
 }
 
 export default {
