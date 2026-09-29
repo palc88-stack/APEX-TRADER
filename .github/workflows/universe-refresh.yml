@@ -1,8 +1,8 @@
 name: APEX Universe Refresh
 
 on:
-  schedule:
-    - cron: "0 */4 * * *"
+  # The four-hour schedule is owned by the Cloudflare Worker Cron Trigger.
+  # Keep this workflow manual as a safe fallback and verification path.
   workflow_dispatch: {}
 
 concurrency:
