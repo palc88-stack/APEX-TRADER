@@ -204,6 +204,63 @@ class StateManager:
             logger.error("❌ save_trade_state: {}", e)
             return False
 
+    def record_trade_order(self, order_data: Dict[str, Any]) -> Optional[int]:
+        """Persist exchange order provenance; duplicate identities are harmless."""
+        if not self.client:
+            logger.error("❌ trade order ledger unavailable: Supabase is required")
+            return None
+        try:
+            result = self.client.table("trade_orders").insert(order_data).execute()
+            rows = list(getattr(result, "data", None) or [])
+            return int(rows[0]["id"]) if rows and rows[0].get("id") is not None else None
+        except Exception as e:
+            logger.error("❌ record_trade_order: {}", e)
+            return None
+
+    def record_trade_fill(self, fill_data: Dict[str, Any]) -> bool:
+        """Persist one exchange-confirmed fill; never infer it from candles."""
+        if not self.client:
+            logger.error("❌ trade fill ledger unavailable: Supabase is required")
+            return False
+        try:
+            self.client.table("trade_fills").insert(fill_data).execute()
+            return True
+        except Exception as e:
+            logger.error("❌ record_trade_fill: {}", e)
+            return False
+
+    def record_trading_event(
+        self,
+        event_type: str,
+        idempotency_key: str,
+        *,
+        source: str = "bot",
+        exchange: Optional[str] = None,
+        trade_id: Optional[str] = None,
+        order_id: Optional[int] = None,
+        symbol: Optional[str] = None,
+        payload: Optional[Dict[str, Any]] = None,
+    ) -> bool:
+        """Append an operational event; repeated keys are treated as already recorded."""
+        if not self.client or not idempotency_key:
+            return False
+        try:
+            self.client.table("trading_events").insert({
+                "event_type": event_type,
+                "idempotency_key": idempotency_key,
+                "source": source,
+                "exchange": exchange,
+                "trade_id": trade_id,
+                "order_id": order_id,
+                "symbol": symbol,
+                "payload": payload or {},
+            }).execute()
+            return True
+        except Exception as e:
+            # Unique idempotency collisions mean the event was already recorded.
+            logger.warning("⚠️ record_trading_event {}: {}", event_type, e)
+            return False
+
     def mark_trade_needs_reconciliation(self, trade: Dict[str, Any], note: str) -> bool:
         """تجميد الصفقة عندما لا يمكن مطابقة الحالة المحلية مع المنصة."""
         return self.save_trade_state({

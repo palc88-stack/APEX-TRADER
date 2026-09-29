@@ -367,6 +367,28 @@ class ApexTraderBot:
                                 reason="tp1",
                             )
                             partial_order_id = str(partial_order.get("id") or "")
+                            partial_ledger_id = self.state_manager.record_trade_order({
+                                "trade_id": pos_obj.id,
+                                "exchange": self.config.exchange.primary_exchange(),
+                                "symbol": symbol,
+                                "side": "sell" if pos_obj.direction.value == "LONG" else "buy",
+                                "order_type": str(partial_order.get("type") or "MARKET").lower(),
+                                "status": str(partial_order.get("status") or "submitted").lower(),
+                                "exchange_order_id": partial_order_id or None,
+                                "client_order_id": partial_order.get("clientOrderId"),
+                                "requested_quantity": partial_amount,
+                                "reduce_only": True,
+                                "raw_payload": {"reason": "tp1"},
+                            })
+                            self.state_manager.record_trading_event(
+                                "ORDER_SUBMITTED",
+                                f"order_submitted:{self.config.exchange.primary_exchange()}:{partial_order_id or partial_order.get('clientOrderId')}",
+                                exchange=self.config.exchange.primary_exchange(),
+                                trade_id=pos_obj.id,
+                                order_id=partial_ledger_id,
+                                symbol=symbol,
+                                payload={"reason": "tp1", "requested_quantity": partial_amount},
+                            )
                             partial_fill = (
                                 await self.exchange.fetch_fill_details(partial_order_id, symbol)
                                 if partial_order_id else None
@@ -383,6 +405,30 @@ class ApexTraderBot:
                                 self._reconciliation_blocked_symbols.add(symbol)
                                 raise RuntimeError("partial close requires reconciliation")
 
+                            self.state_manager.record_trade_fill({
+                                "order_id": partial_ledger_id,
+                                "trade_id": pos_obj.id,
+                                "exchange": self.config.exchange.primary_exchange(),
+                                "symbol": symbol,
+                                "exchange_order_id": partial_order_id or None,
+                                "side": "sell" if pos_obj.direction.value == "LONG" else "buy",
+                                "quantity": partial_fill.quantity,
+                                "price": partial_fill.price,
+                                "fee_amount": partial_fill.fee,
+                                "price_source": partial_fill.price_source.value,
+                                "quantity_source": partial_fill.quantity_source.value,
+                                "fee_source": partial_fill.fee_source.value,
+                                "raw_payload": partial_fill.as_record(),
+                            })
+                            self.state_manager.record_trading_event(
+                                "TP1_EXECUTED",
+                                f"tp1_executed:{pos_obj.id}:{partial_order_id}:{partial_fill.price}:{partial_fill.quantity}",
+                                exchange=self.config.exchange.primary_exchange(),
+                                trade_id=pos_obj.id,
+                                order_id=partial_ledger_id,
+                                symbol=symbol,
+                                payload=partial_fill.as_record(),
+                            )
                             partial_pnl = (
                                 (partial_fill.price - pos_obj.entry_price)
                                 * partial_fill.quantity
@@ -428,6 +474,28 @@ class ApexTraderBot:
                         )
 
                         close_order_id = str(order.get("id") or "")
+                        close_ledger_id = self.state_manager.record_trade_order({
+                            "trade_id": pos_obj.id,
+                            "exchange": self.config.exchange.primary_exchange(),
+                            "symbol": symbol,
+                            "side": "sell" if pos_obj.direction.value == "LONG" else "buy",
+                            "order_type": str(order.get("type") or "MARKET").lower(),
+                            "status": str(order.get("status") or "submitted").lower(),
+                            "exchange_order_id": close_order_id or None,
+                            "client_order_id": order.get("clientOrderId"),
+                            "requested_quantity": pos_obj.remaining_quantity,
+                            "reduce_only": True,
+                            "raw_payload": {"reason": action.get("reason", "unknown")},
+                        })
+                        self.state_manager.record_trading_event(
+                            "ORDER_SUBMITTED",
+                            f"order_submitted:{self.config.exchange.primary_exchange()}:{close_order_id or order.get('clientOrderId')}",
+                            exchange=self.config.exchange.primary_exchange(),
+                            trade_id=pos_obj.id,
+                            order_id=close_ledger_id,
+                            symbol=symbol,
+                            payload={"reason": action.get("reason", "unknown")},
+                        )
                         fill = (
                             await self.exchange.fetch_fill_details(close_order_id, symbol)
                             if close_order_id else None
@@ -453,6 +521,32 @@ class ApexTraderBot:
                                 "closed_at": datetime.now(timezone.utc).isoformat(),
                             })
                             continue
+
+                        self.state_manager.record_trade_fill({
+                            "order_id": close_ledger_id,
+                            "trade_id": pos_obj.id,
+                            "exchange": self.config.exchange.primary_exchange(),
+                            "symbol": symbol,
+                            "exchange_order_id": close_order_id or None,
+                            "side": "sell" if pos_obj.direction.value == "LONG" else "buy",
+                            "quantity": fill.quantity,
+                            "price": fill.price,
+                            "fee_amount": fill.fee,
+                            "realized_pnl": None,
+                            "price_source": fill.price_source.value,
+                            "quantity_source": fill.quantity_source.value,
+                            "fee_source": fill.fee_source.value,
+                            "raw_payload": fill.as_record(),
+                        })
+                        self.state_manager.record_trading_event(
+                            "ORDER_FILLED",
+                            f"order_filled:{self.config.exchange.primary_exchange()}:{close_order_id}:{fill.price}:{fill.quantity}",
+                            exchange=self.config.exchange.primary_exchange(),
+                            trade_id=pos_obj.id,
+                            order_id=close_ledger_id,
+                            symbol=symbol,
+                            payload=fill.as_record(),
+                        )
 
                         # ✅ إصلاح خلل حرج (مؤكَّد): close_position() في
                         # PositionManager (الذي يحسب pnl الفعلي) لم يكن يُستدعى
@@ -493,6 +587,18 @@ class ApexTraderBot:
                             closed_pos.pnl = realized_pnl
                         await self.telegram.send_trade_closed(
                             closed_pos or pos_obj, action.get("reason", "")
+                        )
+                        self.state_manager.record_trading_event(
+                            "TRADE_CLOSED",
+                            f"trade_closed:{pos_obj.id}:{close_order_id}:{fill.price}:{realized_pnl}",
+                            exchange=self.config.exchange.primary_exchange(),
+                            trade_id=pos_obj.id,
+                            order_id=close_ledger_id,
+                            symbol=symbol,
+                            payload={
+                                "reason": action.get("reason", ""),
+                                "realized_pnl": realized_pnl,
+                            },
                         )
                         self.state_manager.release_position_slot(
                             trade_id=str(pos.get("entry_order_id") or pos_obj.id)
@@ -600,6 +706,29 @@ class ApexTraderBot:
                 entries_started += 1
 
                 entry_order_id = str(order.get("id") or "")
+                order_ledger_id = self.state_manager.record_trade_order({
+                    "exchange": self.config.exchange.primary_exchange(),
+                    "symbol": symbol,
+                    "side": side,
+                    "order_type": str(order.get("type") or "MARKET").lower(),
+                    "status": str(order.get("status") or "submitted").lower(),
+                    "exchange_order_id": entry_order_id or None,
+                    "client_order_id": order.get("clientOrderId"),
+                    "requested_quantity": order_amount,
+                    "requested_price": entry_price,
+                    "reduce_only": False,
+                    "raw_payload": {
+                        "protection_order_ids": order.get("protection_order_ids", []),
+                    },
+                })
+                self.state_manager.record_trading_event(
+                    "ORDER_SUBMITTED",
+                    f"order_submitted:{self.config.exchange.primary_exchange()}:{entry_order_id or order.get('clientOrderId')}",
+                    exchange=self.config.exchange.primary_exchange(),
+                    order_id=order_ledger_id,
+                    symbol=symbol,
+                    payload={"side": side, "requested_quantity": order_amount},
+                )
                 if entry_order_id:
                     self.state_manager.bind_position_slot(
                         slot_reservation_id, entry_order_id
@@ -609,6 +738,16 @@ class ApexTraderBot:
                     if entry_order_id else None
                 )
                 protection_ids = [str(value) for value in order.get("protection_order_ids", [])]
+                if protection_ids:
+                    self.state_manager.record_trading_event(
+                        "PROTECTION_PLACED",
+                        f"protection_placed:{entry_order_id}:{','.join(protection_ids)}",
+                        exchange=self.config.exchange.primary_exchange(),
+                        trade_id=entry_order_id or None,
+                        order_id=order_ledger_id,
+                        symbol=symbol,
+                        payload={"protection_order_ids": protection_ids},
+                    )
 
                 if entry_fill is None or not entry_fill.is_pnl_eligible:
                     self._reconciliation_blocked_symbols.add(symbol)
@@ -631,6 +770,30 @@ class ApexTraderBot:
                 entry_quantity = entry_fill.quantity
                 notional_usd = entry_price * entry_quantity
                 size_usd = notional_usd / leverage
+                self.state_manager.record_trade_fill({
+                    "order_id": order_ledger_id,
+                    "trade_id": entry_order_id or None,
+                    "exchange": self.config.exchange.primary_exchange(),
+                    "symbol": symbol,
+                    "exchange_order_id": entry_order_id or None,
+                    "side": side,
+                    "quantity": entry_quantity,
+                    "price": entry_price,
+                    "fee_amount": entry_fill.fee,
+                    "price_source": entry_fill.price_source.value,
+                    "quantity_source": entry_fill.quantity_source.value,
+                    "fee_source": entry_fill.fee_source.value,
+                    "raw_payload": entry_fill.as_record(),
+                })
+                self.state_manager.record_trading_event(
+                    "ORDER_FILLED",
+                    f"order_filled:{self.config.exchange.primary_exchange()}:{entry_order_id}:{entry_price}:{entry_quantity}",
+                    exchange=self.config.exchange.primary_exchange(),
+                    trade_id=entry_order_id or None,
+                    order_id=order_ledger_id,
+                    symbol=symbol,
+                    payload=entry_fill.as_record(),
+                )
 
                 # 6. حفظ الصفقة
                 fee_result = self.fee_calculator.calculate(
@@ -686,6 +849,15 @@ class ApexTraderBot:
                     self._reconciliation_blocked_symbols.add(symbol)
                     raise RuntimeError("saved trade could not be reconstructed locally")
                 self.position_manager.add_position(position)
+                self.state_manager.record_trading_event(
+                    "TRADE_OPENED",
+                    f"trade_opened:{entry_order_id}",
+                    exchange=self.config.exchange.primary_exchange(),
+                    trade_id=entry_order_id or None,
+                    order_id=order_ledger_id,
+                    symbol=symbol,
+                    payload={"status": "OPEN", "entry_price": entry_price},
+                )
                 # Notify only after the fill is confirmed and the trade state
                 # is durably persisted; a signal alone is not a filled trade.
                 await self.telegram.send_trade_opened(position)
