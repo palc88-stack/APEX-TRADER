@@ -785,7 +785,20 @@ if __name__ == "__main__":
         _logger.info("🚀 بدء تشغيل APEX TRADER...")
         bot = ApexTraderBot()
         try:
-            interval_seconds = int(os.getenv("APEX_CYCLE_INTERVAL_SECONDS", "60"))
+            # GitHub Actions may expose an optional input as an empty string.
+            # Treat blank/invalid values as the safe one-minute default.
+            raw_interval = (os.getenv("APEX_CYCLE_INTERVAL_SECONDS") or "60").strip()
+            try:
+                interval_seconds = int(raw_interval)
+            except ValueError:
+                _logger.warning(
+                    f"⚠️ قيمة APEX_CYCLE_INTERVAL_SECONDS غير صالحة ({raw_interval!r})؛ "
+                    "سيتم استخدام 60 ثانية"
+                )
+                interval_seconds = 60
+            if interval_seconds < 1:
+                _logger.warning("⚠️ يجب أن يكون الفاصل موجباً؛ سيتم استخدام 60 ثانية")
+                interval_seconds = 60
             await bot.run_forever(interval_seconds=interval_seconds)
         except KeyboardInterrupt:
             _logger.info("⛔ توقف يدوياً")

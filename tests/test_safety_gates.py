@@ -128,11 +128,12 @@ def test_testnet_session_scans_required_symbols_by_real_volume():
     assert 'MIN_QUOTE_VOLUME_USDT: "5000000"' in workflow
 
 
-def test_testnet_session_is_scheduled_and_run_bot_is_read_only():
+def test_testnet_session_is_manual_and_run_bot_is_read_only():
     testnet = (ROOT / ".github/workflows/testnet-session.yml").read_text()
     run_bot = (ROOT / ".github/workflows/run-bot.yml").read_text()
     universe = (ROOT / ".github/workflows/universe-refresh.yml").read_text()
-    assert "  schedule:" in testnet
+    assert "workflow_dispatch:" in testnet
+    assert "  schedule:" not in testnet
     assert 'TRADING_EXECUTION_ENABLED: "true"' in testnet
     assert 'ALLOW_LIVE_TRADING: "false"' in testnet
     assert 'TRADING_EXECUTION_ENABLED: "false"' in run_bot
