@@ -87,6 +87,27 @@ async function telegram(env, message) {
   if (!response.ok) throw new Error(`Telegram returned ${response.status}`);
 }
 
+async function sendDedupedMonitorAlert(env, alertType, message) {
+  const bucket = new Date().toISOString().slice(0, 13);
+  const idempotencyKey = `cloudflare_monitor:${alertType}:${bucket}`;
+  const existing = await supabaseRequest(
+    env,
+    `trading_events?select=event_id&idempotency_key=eq.${encodeURIComponent(idempotencyKey)}&limit=1`
+  );
+  if (existing?.length) return false;
+  await telegram(env, message);
+  await supabaseRequest(env, "trading_events", {
+    method: "POST",
+    body: {
+      event_type: "SYSTEM_ALERT",
+      idempotency_key: idempotencyKey,
+      source: "cloudflare_monitor",
+      payload: { alert_type: alertType },
+    },
+  });
+  return true;
+}
+
 function normalizeSymbol(symbol) {
   return String(symbol || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
 }
@@ -213,6 +234,16 @@ async function monitor(env) {
     confirmed_realized_pnl: summary?.[0]?.confirmed_realized_pnl ?? null,
   };
   console.log(JSON.stringify(result));
+  const heartbeatMs = state?.heartbeat_at ? Date.parse(state.heartbeat_at) : NaN;
+  if (!Number.isFinite(heartbeatMs) || Date.now() - heartbeatMs > 10 * 60 * 1000) {
+    await sendDedupedMonitorAlert(
+      env,
+      "stale_heartbeat",
+      "⬡ <b>APEX TRADER - تنبيه مراقبة</b>\n\n" +
+      "🚨 <b>Heartbeat متوقف أو قديم</b>\n" +
+      "لم يتم تعديل أوامر؛ يرجى فحص GitHub Actions وSupabase."
+    );
+  }
   return result;
 }
 
