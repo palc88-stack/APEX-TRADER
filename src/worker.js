@@ -211,16 +211,20 @@ export default {
   },
 
   async scheduled(controller, env, ctx) {
-    // Explicit routing keeps each job bounded and prevents trading side effects.
     const job = controller.cron;
-    if (job === "0 2 * * *") {
-      ctx.waitUntil(reconcileDaily(env));
-    } else if (job === "0 */4 * * *") {
-      ctx.waitUntil(refreshUniverse(env));
-    } else if (job === "*/5 * * * *") {
-      ctx.waitUntil(monitor(env));
-    } else {
-      console.log(JSON.stringify({ event: "unknown_cron", cron: job }));
-    }
+    let task;
+    if (job === "0 2 * * *") task = reconcileDaily(env);
+    else if (job === "0 */4 * * *") task = refreshUniverse(env);
+    else if (job === "*/5 * * * *") task = monitor(env);
+    else task = Promise.resolve();
+    // Never leave a scheduled rejection unhandled; log the real cause instead.
+    ctx.waitUntil(Promise.resolve(task).catch((error) => {
+      console.error(JSON.stringify({
+        event: "cron_error",
+        cron: job,
+        error: String(error),
+        stack: error?.stack || ""
+      }));
+    }));
   },
 };
