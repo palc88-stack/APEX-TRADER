@@ -67,11 +67,6 @@ def main() -> None:
         }
         print(json.dumps({"exchange_observation": observation}, default=str))
 
-        if abs(contracts) > 1e-12:
-            raise RuntimeError(
-                f"FAIL CLOSED: Binance still reports an open position: contracts={contracts}"
-            )
-
         rows = sb(
             "GET",
             f"trades?select=id,status,symbol&status=eq.NEEDS_RECONCILIATION&id=eq.{TRADE_ID}&limit=1",
@@ -80,32 +75,60 @@ def main() -> None:
             print("No NEEDS_RECONCILIATION record found; no state changed.")
             return
 
-        note = (
-            "Manual reconciliation confirmed by Binance Testnet: current position quantity is zero. "
-            f"Order status={order_status}, order filled={filled}, average={average}. "
-            "No exit fill or realized PnL was inferred; accounting remains unconfirmed."
-        )
-        updated = sb(
-            "PATCH",
-            f"trades?id=eq.{TRADE_ID}&status=eq.NEEDS_RECONCILIATION",
-            {
-                "status": "CLOSED",
-                "remaining_quantity": 0,
-                "close_reason": "manual",
-                "pnl_source": "unconfirmed_manual_reconciliation",
-                "exit_price_source": "unconfirmed",
-                "exit_quantity_source": "exchange_position_zero",
-                "exit_fee_source": "unconfirmed",
-                "reconciliation_note": note,
-                "closed_at": datetime.now(timezone.utc).isoformat(),
-            },
-        )
-        released = sb(
-            "POST",
-            "rpc/release_position_slot",
-            {"p_symbol": SYMBOL, "p_trade_id": TRADE_ID, "p_reservation_id": None},
-            prefer="return=minimal",
-        )
+        if abs(contracts) > 1e-12:
+            if filled <= 0 or not average or abs(contracts - filled) > max(1e-8, filled * 0.001):
+                raise RuntimeError(
+                    f"FAIL CLOSED: Binance position cannot be matched to entry fill: "
+                    f"contracts={contracts}, filled={filled}, average={average}"
+                )
+            direction = "LONG" if contracts > 0 else "SHORT"
+            note = (
+                "Reconciled from Binance Testnet: an open position was confirmed. "
+                f"Order status={order_status}, filled={filled}, average={average}, side={position_side}. "
+                "No exit fill or realized PnL was inferred."
+            )
+            updated = sb(
+                "PATCH",
+                f"trades?id=eq.{TRADE_ID}&status=eq.NEEDS_RECONCILIATION",
+                {
+                    "status": "OPEN",
+                    "direction": direction,
+                    "entry_price": float(average),
+                    "entry_quantity": filled,
+                    "remaining_quantity": abs(contracts),
+                    "entry_price_source": "exchange_fill",
+                    "entry_quantity_source": "exchange_fill",
+                    "reconciliation_note": note,
+                },
+            )
+            released = False
+        else:
+            note = (
+                "Manual reconciliation confirmed by Binance Testnet: current position quantity is zero. "
+                f"Order status={order_status}, order filled={filled}, average={average}. "
+                "No exit fill or realized PnL was inferred; accounting remains unconfirmed."
+            )
+            updated = sb(
+                "PATCH",
+                f"trades?id=eq.{TRADE_ID}&status=eq.NEEDS_RECONCILIATION",
+                {
+                    "status": "CLOSED",
+                    "remaining_quantity": 0,
+                    "close_reason": "manual",
+                    "pnl_source": "unconfirmed_manual_reconciliation",
+                    "exit_price_source": "unconfirmed",
+                    "exit_quantity_source": "exchange_position_zero",
+                    "exit_fee_source": "unconfirmed",
+                    "reconciliation_note": note,
+                    "closed_at": datetime.now(timezone.utc).isoformat(),
+                },
+            )
+            released = sb(
+                "POST",
+                "rpc/release_position_slot",
+                {"p_symbol": SYMBOL, "p_trade_id": TRADE_ID, "p_reservation_id": None},
+                prefer="return=minimal",
+            )
         sb(
             "POST",
             "trading_events",
@@ -120,7 +143,9 @@ def main() -> None:
         )
         print(json.dumps({"updated_trade": updated, "slot_released": released}, default=str))
     finally:
-        exchange.close()
+        close_method = getattr(exchange, "close", None)
+        if callable(close_method):
+            close_method()
 
 
 if __name__ == "__main__":
