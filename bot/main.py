@@ -686,6 +686,9 @@ class ApexTraderBot:
                     self._reconciliation_blocked_symbols.add(symbol)
                     raise RuntimeError("saved trade could not be reconstructed locally")
                 self.position_manager.add_position(position)
+                # Notify only after the fill is confirmed and the trade state
+                # is durably persisted; a signal alone is not a filled trade.
+                await self.telegram.send_trade_opened(position)
                 logger.info(f"✅ صفقة جديدة: {symbol} {side} @ {entry_price}")
 
             except Exception as e:
