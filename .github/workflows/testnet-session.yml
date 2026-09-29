@@ -1,8 +1,9 @@
 name: Binance Testnet Session
 
 on:
-  # Testnet sessions must be started deliberately; never run order-capable
-  # sessions from a background schedule.
+  # Testnet only: bounded automatic validation, never Live trading.
+  schedule:
+    - cron: "0 */2 * * *"
   workflow_dispatch:
     inputs:
       cycles:
@@ -21,7 +22,7 @@ permissions:
 
 concurrency:
   group: apex-testnet-session
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   testnet:
