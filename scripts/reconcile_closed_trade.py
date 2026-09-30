@@ -50,6 +50,14 @@ def main() -> None:
         order = exchange.fetch_order(TRADE_ID, SYMBOL)
         positions = exchange.fetch_positions([SYMBOL])
         position = next((p for p in positions if p.get("symbol") == SYMBOL), None)
+        market_id = exchange.market(SYMBOL)["id"]
+        try:
+            algo_orders = exchange.request(
+                "openAlgoOrders", "fapiPrivate", "GET", {"symbol": market_id}
+            ) or []
+        except Exception as exc:
+            algo_orders = []
+            print(json.dumps({"protection_query_error": str(exc)}))
         contracts = float((position or {}).get("contracts") or 0)
         position_side = (position or {}).get("side")
         order_status = order.get("status")
@@ -64,6 +72,16 @@ def main() -> None:
             "order_average": average,
             "position_contracts": contracts,
             "position_side": position_side,
+            "open_algo_orders": [
+                {
+                    "algoId": item.get("algoId"),
+                    "type": item.get("orderType") or item.get("type"),
+                    "triggerPrice": item.get("triggerPrice") or item.get("stopPrice"),
+                    "quantity": item.get("quantity"),
+                    "side": item.get("side"),
+                }
+                for item in algo_orders
+            ],
         }
         print(json.dumps({"exchange_observation": observation}, default=str))
 
