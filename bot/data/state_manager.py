@@ -142,6 +142,27 @@ class StateManager:
         except Exception as e:
             logger.error("❌ load_initial_state: {}", e)
 
+    def get_daily_confirmed_metrics(self) -> Dict[str, float] | None:
+        """Read today's confirmed PnL from the database projection."""
+        if not self.client:
+            return None
+        try:
+            result = (
+                self.client.table("dashboard_daily_summary")
+                .select("confirmed_realized_pnl,confirmed_loss_used_usd")
+                .limit(1)
+                .maybe_single()
+                .execute()
+            )
+            data = getattr(result, "data", None) or {}
+            return {
+                "realized_pnl": float(data.get("confirmed_realized_pnl") or 0.0),
+                "loss_used": float(data.get("confirmed_loss_used_usd") or 0.0),
+            }
+        except Exception as exc:
+            logger.warning("⚠️ Daily confirmed metrics unavailable: {}", exc)
+            return None
+
     async def update_heartbeat(self) -> None:
         """
         ✅ كتابة Heartbeat عبر StateManager (لا يتجاوزه main.py).
