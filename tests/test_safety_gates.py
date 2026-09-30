@@ -130,12 +130,12 @@ def test_workflow_has_no_schedule_or_live_secret():
     assert 'ALLOW_NEW_ENTRIES: "false"' in workflow
 
 
-def test_testnet_session_scans_required_symbols_by_real_volume():
+def test_testnet_session_uses_dynamic_universe():
     workflow = (ROOT / ".github/workflows/testnet-session.yml").read_text()
     assert "TRADING_SYMBOLS: BTC/USDT,ETH/USDT,SOL/USDT" in workflow
-    assert 'AUTO_SYMBOL_SCAN: "true"' in workflow
-    assert 'SYMBOL_SCAN_LIMIT: "3"' in workflow
-    assert 'MIN_QUOTE_VOLUME_USDT: "5000000"' in workflow
+    assert 'UNIVERSE_SIZE: "20"' in workflow
+    assert 'UNIVERSE_REFRESH_HOURS: "4"' in workflow
+    assert 'AUTO_SYMBOL_SCAN: "false"' in workflow
 
 
 def test_testnet_session_is_scheduled_and_run_bot_is_read_only():
