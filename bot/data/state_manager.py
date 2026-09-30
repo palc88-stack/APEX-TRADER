@@ -296,6 +296,16 @@ class StateManager:
         close_reason: str,
     ) -> bool:
         """Close a reconciliation record only after exchange fill evidence exists."""
+        entry_price = float(trade.get("entry_price") or 0.0)
+        entry_quantity = float(trade.get("entry_quantity") or fill.quantity or 0.0)
+        direction = str(trade.get("direction") or "LONG").upper()
+        gross_pnl = (
+            (float(fill.price) - entry_price) * entry_quantity
+            if direction in {"LONG", "BUY"}
+            else (entry_price - float(fill.price)) * entry_quantity
+        )
+        realized_pnl = gross_pnl - float(trade.get("entry_fee") or 0.0) - float(fill.fee)
+        account_balance = float(trade.get("account_balance_at_entry") or 0.0)
         update = {
             **trade,
             "status": "CLOSED",
@@ -303,10 +313,18 @@ class StateManager:
             "exit_price": float(fill.price),
             "exit_quantity": float(fill.quantity),
             "exit_fee": float(fill.fee),
+            "exit_fee_currency": fill.fee_currency or None,
+            "exit_filled_at": fill.filled_at,
+            "exit_slippage_bps": fill.slippage_bps,
+            "exit_mark_price": fill.mark_price,
+            "exit_trigger_price": fill.trigger_price,
             "exit_price_source": fill.price_source.value,
             "exit_quantity_source": fill.quantity_source.value,
             "exit_fee_source": fill.fee_source.value,
-            "pnl_source": "unconfirmed",
+            "pnl": round(realized_pnl, 4),
+            "pnl_pct": round((realized_pnl / float(trade.get("margin_usd") or 1.0)) * 100, 4),
+            "pnl_account_pct": round((realized_pnl / account_balance) * 100, 4) if account_balance > 0 else None,
+            "pnl_source": "exchange_fill",
             "close_reason": close_reason,
             "reconciliation_note": "automatically closed reduce-only after exchange fill confirmation",
             "closed_at": datetime.now(timezone.utc).isoformat(),

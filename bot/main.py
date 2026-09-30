@@ -554,7 +554,9 @@ class ApexTraderBot:
                             payload={"reason": action.get("reason", "unknown")},
                         )
                         fill = (
-                            await self.exchange.fetch_fill_details(close_order_id, symbol)
+                            await self.exchange.fetch_fill_details(
+                                close_order_id, symbol, reference_price=current_price
+                            )
                             if close_order_id else None
                         )
                         if (
@@ -589,6 +591,13 @@ class ApexTraderBot:
                             "quantity": fill.quantity,
                             "price": fill.price,
                             "fee_amount": fill.fee,
+                            "fee_currency": fill.fee_currency or None,
+                            "exchange_fill_id": fill.trade_ids[0] if fill.trade_ids else None,
+                            "filled_at": fill.filled_at,
+                            "reference_price": fill.reference_price,
+                            "slippage_bps": fill.slippage_bps,
+                            "mark_price": fill.mark_price,
+                            "trigger_price": fill.trigger_price,
                             "realized_pnl": None,
                             "price_source": fill.price_source.value,
                             "quantity_source": fill.quantity_source.value,
@@ -631,9 +640,24 @@ class ApexTraderBot:
                             "exit_fee_source": fill.fee_source.value,
                             "pnl_source": "exchange_fill",
                             "exit_fee": fill.fee,
+                            "exit_fee_currency": fill.fee_currency or None,
+                            "exit_filled_at": fill.filled_at,
+                            "exit_slippage_bps": fill.slippage_bps,
+                            "exit_mark_price": fill.mark_price,
+                            "exit_trigger_price": fill.trigger_price,
                             "close_reason": action.get("reason"),
                             "pnl": realized_pnl,
                             "pnl_pct": closed_pos.pnl_pct if closed_pos else 0.0,
+                            "pnl_account_pct": (
+                                round(
+                                    (realized_pnl / account_balance) * 100,
+                                    4,
+                                )
+                                if (account_balance := float(
+                                    pos.get("account_balance_at_entry") or self._current_balance
+                                )) > 0
+                                else None
+                            ),
                             # ✅ إصلاح: عمود "duration_minutes" مطلوب من App.jsx
                             # ولم يكن يُحفَظ أبداً — Position.duration_minutes
                             # موجودة كخاصية محسوبة لكنها لم تُصدَّر لقاعدة البيانات.
@@ -697,7 +721,6 @@ class ApexTraderBot:
                 tp1_pct = float(signal_result.get("take_profit_pct") or risk_cfg.tp1_pct / 100)
                 tp2_pct = float(signal_result.get("take_profit_pct") or risk_cfg.tp2_pct / 100)
                 leverage = risk_cfg.max_leverage
-                size_usd = self._calculate_position_size()
 
                 if str(action_val).upper() in ("LONG", "BUY"):
                     stop_loss = round(entry_price * (1 - sl_pct), 6)
@@ -710,12 +733,18 @@ class ApexTraderBot:
                     take_profit_2 = round(entry_price * (1 - tp2_pct), 6)
                     side = "sell"
 
-                # ✅ تحقق evaluate_risk قبل التنفيذ
                 balance = await self.exchange.get_balance()
                 if balance <= 0:
                     logger.error("Skipping new entry for %s: balance unavailable", symbol)
                     continue
                 self._current_balance = balance
+                size_usd = self._calculate_position_size(
+                    entry_price=entry_price,
+                    stop_loss=stop_loss,
+                    leverage=leverage,
+                )
+
+                # ✅ تحقق evaluate_risk قبل التنفيذ
                 if not self.risk_manager.evaluate_risk(
                     account_balance=balance,
                     size_usd=size_usd,
@@ -793,7 +822,9 @@ class ApexTraderBot:
                         slot_reservation_id, entry_order_id
                     )
                 entry_fill = (
-                    await self.exchange.fetch_fill_details(entry_order_id, symbol)
+                    await self.exchange.fetch_fill_details(
+                        entry_order_id, symbol, reference_price=entry_price
+                    )
                     if entry_order_id else None
                 )
                 protection_ids = [str(value) for value in order.get("protection_order_ids", [])]
@@ -839,6 +870,13 @@ class ApexTraderBot:
                     "quantity": entry_quantity,
                     "price": entry_price,
                     "fee_amount": entry_fill.fee,
+                    "fee_currency": entry_fill.fee_currency or None,
+                    "exchange_fill_id": entry_fill.trade_ids[0] if entry_fill.trade_ids else None,
+                    "filled_at": entry_fill.filled_at,
+                    "reference_price": entry_fill.reference_price,
+                    "slippage_bps": entry_fill.slippage_bps,
+                    "mark_price": entry_fill.mark_price,
+                    "trigger_price": entry_fill.trigger_price,
                     "price_source": entry_fill.price_source.value,
                     "quantity_source": entry_fill.quantity_source.value,
                     "fee_source": entry_fill.fee_source.value,
@@ -867,7 +905,9 @@ class ApexTraderBot:
                     # كان سيسبب فراغاً دائماً في هذا العمود بالواجهة.
                     "mode": str(self.config.active_mode),
                     "strategy": signal_result.get("strategy") or "UNKNOWN",
+                    "strategy_subtype": signal_result.get("strategy_subtype") or "unknown",
                     "signal_confidence": signal_result.get("confidence", 0.0),
+                    "rule_score": signal_result.get("rule_score", signal_result.get("confidence", 0.0)),
                     "signal_reason": signal_result.get("reason", ""),
                     "exchange": self.config.exchange.primary_exchange(),
                     "entry_price": entry_price,
@@ -886,10 +926,16 @@ class ApexTraderBot:
                     "size_usd": size_usd,
                     "margin_usd": size_usd,
                     "notional_usd": notional_usd,
+                    "account_balance_at_entry": self._current_balance,
                     "entry_quantity": entry_quantity,
                     "remaining_quantity": entry_quantity,
                     "leverage": leverage,
                     "entry_fee": entry_fill.fee,
+                    "entry_fee_currency": entry_fill.fee_currency or None,
+                    "entry_filled_at": entry_fill.filled_at,
+                    "entry_slippage_bps": entry_fill.slippage_bps,
+                    "entry_mark_price": entry_fill.mark_price,
+                    "entry_trigger_price": entry_fill.trigger_price,
                     "exit_fee": fee_result.exit_fee,
                     "status": "OPEN",
                     "confidence": signal_result.get("confidence", 0.0),
@@ -934,14 +980,25 @@ class ApexTraderBot:
         if cycle_errors:
             raise RuntimeError("market cycle failed: " + " | ".join(cycle_errors))
 
-    def _calculate_position_size(self) -> float:
-        """حساب حجم الصفقة بناءً على الرصيد وإعدادات المخاطر."""
+    def _calculate_position_size(
+        self,
+        entry_price: float | None = None,
+        stop_loss: float | None = None,
+        leverage: int | None = None,
+    ) -> float:
+        """Return margin sized by stop distance, capped by position percentage."""
         try:
             initial = float(self._current_balance)
             if initial <= 0:
                 raise ValueError("balance unavailable")
-            pct = self.config.risk.max_position_pct / 100
-            return round(initial * pct, 2)
+            max_margin = initial * float(self.config.risk.max_position_pct) / 100.0
+            if entry_price and stop_loss and leverage and entry_price > 0 and leverage > 0:
+                stop_distance = abs(float(entry_price) - float(stop_loss)) / float(entry_price)
+                risk_budget = initial * float(self.config.risk.max_risk_per_trade_pct) / 100.0
+                if stop_distance > 0:
+                    risk_sized_margin = risk_budget / (stop_distance * float(leverage))
+                    return round(max(0.0, min(max_margin, risk_sized_margin)), 2)
+            return round(max_margin, 2)
         except Exception:
             return 10.0
 

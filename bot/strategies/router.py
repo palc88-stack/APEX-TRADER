@@ -32,7 +32,9 @@ class StrategyRouter:
                     candidates.append({
                         "action": explosion.direction,
                         "strategy": "EXPLOSION",
+                        "strategy_subtype": "volatility_breakout",
                         "confidence": explosion.confidence,
+                        "rule_score": explosion.confidence,
                         "reason": explosion.reason,
                     })
 
@@ -48,7 +50,9 @@ class StrategyRouter:
                 candidates.append({
                     "action": action,
                     "strategy": "SCALPING",
+                    "strategy_subtype": "mean_reversion_scalp",
                     "confidence": 0.80 if action == "BUY" else 0.75,
+                    "rule_score": 0.80 if action == "BUY" else 0.75,
                     "stop_loss_pct": float(scalp.get(
                         "stop_loss_pct",
                         getattr(self.scalping_strategy, "max_stop_loss_pct", 0.003),
@@ -78,14 +82,18 @@ class StrategyRouter:
             return {
                 "action": "LONG",
                 "strategy": "HUNTER",
+                "strategy_subtype": "trend_pullback_long",
                 "confidence": 0.85,
+                "rule_score": 0.85,
                 "reason": "Bullish trend pullback + RSI oversold.",
             }
         if close < ema_200 and rsi > 60 and self._passes_filters("SELL", latest, df):
             return {
                 "action": "SHORT",
                 "strategy": "HUNTER",
+                "strategy_subtype": "trend_pullback_short",
                 "confidence": 0.85,
+                "rule_score": 0.85,
                 "reason": "Bearish trend rally + RSI overbought.",
             }
         return None
