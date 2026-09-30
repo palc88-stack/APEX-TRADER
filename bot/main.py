@@ -370,7 +370,7 @@ class ApexTraderBot:
                     logger.critical("🛑 %s محجوب حتى إتمام المصالحة اليدوية", symbol)
                     continue
                 candles = await self.market_data.get_ohlcv(
-                    symbol, self.config.trading.timeframe
+                    symbol, self.config.trading.timeframe, limit=300
                 )
                 if candles is None or candles.empty:
                     continue
@@ -691,9 +691,11 @@ class ApexTraderBot:
                 # 4. حساب الأسعار وتنفيذ الأمر
                 entry_price = current_price
                 risk_cfg = self.config.risk
-                sl_pct = risk_cfg.default_sl_pct / 100
-                tp1_pct = risk_cfg.tp1_pct / 100
-                tp2_pct = risk_cfg.tp2_pct / 100
+                # الاستراتيجية قد تحدد نسبًا خاصة بها (مثل SCALPING).
+                # القيم العامة تبقى fallback للاستراتيجيات التي لا تحدد أهدافًا.
+                sl_pct = float(signal_result.get("stop_loss_pct") or risk_cfg.default_sl_pct / 100)
+                tp1_pct = float(signal_result.get("take_profit_pct") or risk_cfg.tp1_pct / 100)
+                tp2_pct = float(signal_result.get("take_profit_pct") or risk_cfg.tp2_pct / 100)
                 leverage = risk_cfg.max_leverage
                 size_usd = self._calculate_position_size()
 

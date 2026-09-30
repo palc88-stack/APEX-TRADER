@@ -49,6 +49,14 @@ class StrategyRouter:
                     "action": action,
                     "strategy": "SCALPING",
                     "confidence": 0.80 if action == "BUY" else 0.75,
+                    "stop_loss_pct": float(scalp.get(
+                        "stop_loss_pct",
+                        getattr(self.scalping_strategy, "max_stop_loss_pct", 0.003),
+                    )),
+                    "take_profit_pct": float(scalp.get(
+                        "take_profit_pct",
+                        getattr(self.scalping_strategy, "target_profit_pct", 0.005),
+                    )),
                     "reason": scalp.get("reason", "Validated scalping setup"),
                 })
 

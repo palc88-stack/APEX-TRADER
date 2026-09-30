@@ -41,6 +41,8 @@ class ScalpingStrategy:
             "entry_price": 0.0,
             "stop_loss": 0.0,
             "take_profit": 0.0,
+            "stop_loss_pct": self.max_stop_loss_pct,
+            "take_profit_pct": self.target_profit_pct,
             "reason": "No scalping setup found"
         }
 
