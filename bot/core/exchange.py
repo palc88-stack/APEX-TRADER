@@ -518,7 +518,7 @@ class ExchangeManager:
         positions = await exchange.fetch_positions([symbol])
         position = next((p for p in positions if p.get("symbol") == symbol and abs(float(p.get("contracts") or 0)) > 0), None)
         if position is None:
-            return {}
+            return {"status": "no_position", "symbol": symbol, "reason": "exchange_position_zero"}
         amount = abs(float(position.get("contracts") or 0))
         return await self.reduce_only_close(symbol, amount, reason=reason)
 

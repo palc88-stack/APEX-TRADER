@@ -234,9 +234,17 @@ class ApexTraderBot:
                         reason="auto_reconciliation_reduce_only",
                         price=0.0,
                     )
+                    if order.get("status") == "no_position":
+                        self.state_manager.save_trade_state({
+                            **trade,
+                            "exit_quantity_source": "exchange_position_zero",
+                            "reconciliation_note": "exchange position is zero; no exit fill was available for automatic accounting",
+                        })
+                        logger.warning("⏳ No exchange position for reconciliation record: %s", symbol)
+                        continue
                     order_id = str(order.get("id") or order.get("orderId") or "")
                     if not order_id:
-                        logger.error("❌ Auto reconciliation close returned no order id: {}", symbol)
+                        logger.error("Auto reconciliation close returned no order id: %s", symbol)
                         continue
                     self.state_manager.save_trade_state({
                         **trade,
