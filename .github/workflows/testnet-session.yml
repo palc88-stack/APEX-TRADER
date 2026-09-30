@@ -39,6 +39,10 @@ jobs:
       ALLOW_NEW_ENTRIES: "true"
       AUTO_RECONCILE_CLOSE_ENABLED: "true"
       AUTO_RECONCILE_CLOSE_LIVE: "false"
+      # One shared lease prevents overlap with reconciliation and Cloudflare.
+      APEX_LEASE_NAME: apex-trading-execution
+      APEX_LEASE_OWNER: github:testnet:${{ github.run_id }}
+      APEX_LEASE_TTL_SECONDS: "300"
       # The persisted dynamic universe is the source of truth for symbols.
       UNIVERSE_SIZE: "20"
       UNIVERSE_REFRESH_HOURS: "4"

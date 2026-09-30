@@ -27,6 +27,10 @@ jobs:
       AUTO_RECONCILE_CLOSE_ENABLED: "true"
       AUTO_RECONCILE_CLOSE_LIVE: "false"
       APEX_RUN_CYCLES: "1"
+      # The bot acquires this lease before initialization and releases it on exit.
+      APEX_LEASE_NAME: apex-trading-execution
+      APEX_LEASE_OWNER: github:reconcile:${{ github.run_id }}
+      APEX_LEASE_TTL_SECONDS: "300"
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
       SUPABASE_WRITE_KEY: ${{ secrets.SUPABASE_WRITE_KEY }}
       BINANCE_API_KEY: ${{ secrets.BINANCE_API_KEY }}

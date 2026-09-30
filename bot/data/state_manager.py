@@ -20,6 +20,13 @@ class StateManager:
     def __init__(self, config: Optional[Any] = None):
         self.config = config
         self.initial_bot_state: Dict[str, Any] = {}
+        self.lease_name = os.getenv("APEX_LEASE_NAME", "apex-trading-execution")
+        self.lease_owner = os.getenv(
+            "APEX_LEASE_OWNER", f"apex-local:{os.getpid()}"
+        )
+        self.lease_ttl_seconds = int(os.getenv("APEX_LEASE_TTL_SECONDS", "300"))
+        self.lease_acquired = False
+        self.lease_lost = False
 
         supabase_url = (
             getattr(getattr(config, "database", None), "supabase_url", None)
@@ -50,6 +57,73 @@ class StateManager:
                 logger.error("❌ Supabase connection failed: {}", e)
         else:
             logger.warning("⚠️ Supabase غير مضبوط - وضع محلي")
+
+    # ─── Distributed execution lease ────────────────────────────────────────
+
+    def acquire_execution_lease(self) -> bool:
+        """Atomically acquire the shared execution lease; fail closed."""
+        if not self.client:
+            logger.error("❌ Cannot acquire execution lease without Supabase")
+            return False
+        try:
+            result = self.client.rpc("acquire_execution_lease", {
+                "p_lease_name": self.lease_name,
+                "p_owner_id": self.lease_owner,
+                "p_ttl_seconds": self.lease_ttl_seconds,
+                "p_metadata": {
+                    "environment": str(getattr(self.config, "environment", "testnet")),
+                    "pid": os.getpid(),
+                },
+            }).execute()
+            acquired = bool(getattr(result, "data", False))
+            self.lease_acquired = acquired
+            self.lease_lost = not acquired
+            if acquired:
+                logger.info("🔒 Execution lease acquired: {}", self.lease_owner)
+            else:
+                logger.warning("⏳ Execution lease is held by another owner")
+            return acquired
+        except Exception as exc:
+            logger.error("❌ acquire_execution_lease: {}", exc)
+            self.lease_acquired = False
+            self.lease_lost = True
+            return False
+
+    def renew_execution_lease(self) -> bool:
+        """Renew the lease; losing it halts further trading cycles."""
+        if not self.lease_acquired or not self.client:
+            return False
+        try:
+            result = self.client.rpc("renew_execution_lease", {
+                "p_lease_name": self.lease_name,
+                "p_owner_id": self.lease_owner,
+                "p_ttl_seconds": self.lease_ttl_seconds,
+            }).execute()
+            renewed = bool(getattr(result, "data", False))
+            if not renewed:
+                self.lease_lost = True
+                logger.error("❌ Execution lease renewal rejected; trading halted")
+            return renewed
+        except Exception as exc:
+            self.lease_lost = True
+            logger.error("❌ renew_execution_lease: {}", exc)
+            return False
+
+    def release_execution_lease(self) -> bool:
+        """Release only this process owner's lease."""
+        if not self.lease_acquired or not self.client:
+            return False
+        try:
+            result = self.client.rpc("release_execution_lease", {
+                "p_lease_name": self.lease_name,
+                "p_owner_id": self.lease_owner,
+            }).execute()
+            released = bool(getattr(result, "data", False))
+            self.lease_acquired = False
+            return released
+        except Exception as exc:
+            logger.error("❌ release_execution_lease: {}", exc)
+            return False
 
     # ─── Lifecycle ────────────────────────────────────────────────────────────
 
