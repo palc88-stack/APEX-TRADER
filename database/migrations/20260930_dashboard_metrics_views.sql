@@ -1,4 +1,5 @@
 -- Refresh dashboard projections after execution metrics migration.
+-- New columns are appended to preserve the existing view column order required by PostgreSQL.
 
 CREATE OR REPLACE VIEW public.dashboard_positions AS
 SELECT
@@ -7,7 +8,6 @@ SELECT
     t.direction,
     t.mode,
     t.strategy,
-    t.strategy_subtype,
     t.exchange,
     t.status,
     t.entry_price,
@@ -23,16 +23,17 @@ SELECT
     t.exit_fee,
     t.pnl,
     t.pnl_pct,
-    t.pnl_account_pct,
-    t.entry_slippage_bps,
-    t.exit_slippage_bps,
     t.pnl_source,
     t.reconciliation_note,
     t.opened_at,
     t.closed_at,
     ps.slot_no,
     ps.status AS slot_status,
-    ps.updated_at AS slot_updated_at
+    ps.updated_at AS slot_updated_at,
+    t.strategy_subtype,
+    t.pnl_account_pct,
+    t.entry_slippage_bps,
+    t.exit_slippage_bps
 FROM public.trades t
 LEFT JOIN public.position_slots ps ON ps.symbol = t.symbol
 WHERE t.status IN ('OPEN', 'NEEDS_RECONCILIATION');
@@ -47,6 +48,6 @@ SELECT
     COUNT(*) FILTER (WHERE status = 'CLOSED' AND pnl < 0)::INTEGER AS losing_trades,
     COALESCE(SUM(pnl) FILTER (WHERE status = 'CLOSED' AND pnl_source <> 'unconfirmed'), 0)::NUMERIC AS confirmed_realized_pnl,
     COALESCE(SUM(entry_fee + exit_fee) FILTER (WHERE status = 'CLOSED' AND pnl_source <> 'unconfirmed'), 0)::NUMERIC AS confirmed_fees,
-    COALESCE(SUM(pnl_account_pct) FILTER (WHERE status = 'CLOSED' AND pnl_source <> 'unconfirmed'), 0)::NUMERIC AS confirmed_account_pnl_pct,
-    MAX(opened_at) AS last_trade_at
+    MAX(opened_at) AS last_trade_at,
+    COALESCE(SUM(pnl_account_pct) FILTER (WHERE status = 'CLOSED' AND pnl_source <> 'unconfirmed'), 0)::NUMERIC AS confirmed_account_pnl_pct
 FROM public.trades;
