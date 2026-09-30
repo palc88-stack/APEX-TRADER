@@ -1,0 +1,43 @@
+name: Audit Historical Testnet Trade
+
+on:
+  workflow_dispatch:
+    inputs:
+      trade_id:
+        description: "Binance Testnet order ID"
+        required: true
+        default: "328600480"
+        type: string
+      symbol:
+        description: "CCXT Binance USD-M symbol"
+        required: true
+        default: "US/USDT:USDT"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      HISTORICAL_TRADE_ID: ${{ inputs.trade_id }}
+      HISTORICAL_SYMBOL: ${{ inputs.symbol }}
+      BINANCE_API_KEY: ${{ secrets.BINANCE_API_KEY }}
+      BINANCE_SECRET_KEY: ${{ secrets.BINANCE_SECRET_KEY }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: python -m pip install --disable-pip-version-check -r requirements.txt
+      - name: Validate required secrets
+        run: |
+          test -n "$BINANCE_API_KEY"
+          test -n "$BINANCE_SECRET_KEY"
+      - name: Audit exchange order and fills (read-only)
+        run: python scripts/audit_historical_trade.py --trade-id "$HISTORICAL_TRADE_ID" --symbol "$HISTORICAL_SYMBOL"
