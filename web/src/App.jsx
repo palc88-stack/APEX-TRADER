@@ -169,6 +169,7 @@ function ServiceRow({ title, value }) {
 
 function Dashboard() {
   const [status, setStatus] = useState(null);
+  const [dailySummary, setDailySummary] = useState(null);
   const [trades, setTrades] = useState([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
@@ -181,7 +182,7 @@ function Dashboard() {
       return;
     }
 
-    const [statusResult, tradesResult] = await Promise.all([
+    const [statusResult, tradesResult, dailySummaryResult] = await Promise.all([
       supabase
         .from("dashboard_risk_state")
         .select("*")
@@ -197,6 +198,12 @@ function Dashboard() {
         )
         .order("opened_at", { ascending: false })
         .limit(200),
+
+      supabase
+        .from("dashboard_daily_summary")
+        .select("*")
+        .limit(1)
+        .maybeSingle(),
     ]);
 
     const errors = [];
@@ -213,6 +220,13 @@ function Dashboard() {
       errors.push(`الصفقات: ${tradesResult.error.message}`);
     } else {
       setTrades(tradesResult.data || []);
+    }
+
+    if (dailySummaryResult.error) {
+      setDailySummary(null);
+      errors.push(`ملخص اليوم: ${dailySummaryResult.error.message}`);
+    } else {
+      setDailySummary(dailySummaryResult.data);
     }
 
     setError(errors.join(" · "));
@@ -246,6 +260,7 @@ function Dashboard() {
 
     const timer = window.setInterval(() => {
       setNow(Date.now());
+      void loadData();
     }, 30000);
 
     return () => {
@@ -292,8 +307,8 @@ function Dashboard() {
     return <main className="page loading">جارٍ تحميل لوحة APEX...</main>;
   }
 
-  const heartbeatTimestamp = status?.last_run_at
-    ? new Date(status.last_run_at).getTime()
+  const heartbeatTimestamp = (status?.heartbeat_at || status?.last_run_at)
+    ? new Date(status.heartbeat_at || status.last_run_at).getTime()
     : null;
 
   const heartbeatAgeMinutes =
@@ -305,7 +320,9 @@ function Dashboard() {
     heartbeatAgeMinutes === null || heartbeatAgeMinutes > 15;
 
   const lossLimit = Number(status?.daily_loss_limit_usd);
-  const lossUsed = Number(status?.daily_loss_used_usd);
+  const lossUsed = Number(
+    dailySummary?.confirmed_loss_used_usd ?? status?.daily_loss_used_usd
+  );
 
   const remainingLoss =
     Number.isFinite(lossLimit) && Number.isFinite(lossUsed)
@@ -319,7 +336,9 @@ function Dashboard() {
       ? Math.min(100, Math.max(0, (lossUsed / lossLimit) * 100))
       : 0;
 
-  const realizedPnl = Number(status?.daily_realized_pnl);
+  const realizedPnl = Number(
+    dailySummary?.confirmed_realized_pnl ?? status?.daily_realized_pnl
+  );
   const realizedTone =
     Number.isFinite(realizedPnl) && realizedPnl < 0
       ? "negative"
