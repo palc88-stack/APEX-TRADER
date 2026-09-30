@@ -306,6 +306,11 @@ class StateManager:
         ضرورية لإعادة تفعيل Trailing Stop و Break Even بعد إعادة تشغيل البوت.
         """
         try:
+            def number(value: Any, fallback: float = 0.0) -> float:
+                if value is None or value == "":
+                    return fallback
+                return float(value)
+
             direction_str = trade_dict.get("direction", "LONG").upper()
             direction = (
                 TradeDirection.LONG
@@ -318,17 +323,17 @@ class StateManager:
                 symbol=str(trade_dict.get("symbol", "")),
                 direction=direction,
                 exchange=str(trade_dict.get("exchange", "binance")),
-                entry_price=float(trade_dict.get("entry_price", 0)),
-                current_price=float(trade_dict.get("entry_price", 0)),
-                stop_loss=float(trade_dict.get("stop_loss", 0)),
-                take_profit_1=float(trade_dict.get("take_profit_1", 0)),
-                take_profit_2=float(trade_dict.get("take_profit_2", 0)),
-                size_usd=float(trade_dict.get("size_usd", 0)),
+                entry_price=number(trade_dict.get("entry_price")),
+                current_price=number(trade_dict.get("entry_price")),
+                stop_loss=number(trade_dict.get("stop_loss")),
+                take_profit_1=number(trade_dict.get("take_profit_1")),
+                take_profit_2=number(trade_dict.get("take_profit_2")),
+                size_usd=number(trade_dict.get("size_usd")),
                 leverage=int(trade_dict.get("leverage", 10)),
-                entry_quantity=float(trade_dict.get("entry_quantity", 0) or 0),
-                remaining_quantity=float(trade_dict.get("remaining_quantity", 0) or 0),
-                entry_fee=float(trade_dict.get("entry_fee", 0)),
-                exit_fee=float(trade_dict.get("exit_fee", 0)),
+                entry_quantity=number(trade_dict.get("entry_quantity")),
+                remaining_quantity=number(trade_dict.get("remaining_quantity")),
+                entry_fee=number(trade_dict.get("entry_fee")),
+                exit_fee=number(trade_dict.get("exit_fee")),
                 # ✅ استعادة حالة Trailing/BreakEven من DB
                 tp1_executed=bool(trade_dict.get("tp1_executed", False)),
                 exchange_managed_protection=bool(
@@ -336,13 +341,13 @@ class StateManager:
                     or trade_dict.get("take_profit_2_algo_id")
                 ),
                 trailing_active=bool(trade_dict.get("trailing_active", False)),
-                trailing_stop=float(trade_dict.get("trailing_stop", 0)),
+                trailing_stop=number(trade_dict.get("trailing_stop")),
                 breakeven_set=bool(trade_dict.get("breakeven_set", False)),
-                highest_price=float(
+                highest_price=number(
                     trade_dict.get("highest_price", 0)
                     or trade_dict.get("entry_price", 0)
                 ),
-                lowest_price=float(
+                lowest_price=number(
                     trade_dict.get("lowest_price", 0)
                     or trade_dict.get("entry_price", 0)
                 ),
