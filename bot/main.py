@@ -94,6 +94,7 @@ class ApexTraderBot:
     async def initialize(self) -> None:
         logger.info("Initializing ApexTrader...")
         await self.state_manager.load_initial_state()
+        confirmed_metrics = self.state_manager.get_daily_confirmed_metrics()
         stored_day = str(self.state_manager.initial_bot_state.get("risk_day") or "")
         if stored_day == self._risk_day:
             self._daily_loss_used = float(
@@ -105,6 +106,14 @@ class ApexTraderBot:
         else:
             self._daily_loss_used = 0.0
             self._daily_realized_pnl = 0.0
+        if confirmed_metrics is not None:
+            self._daily_loss_used = confirmed_metrics["loss_used"]
+            self._daily_realized_pnl = confirmed_metrics["realized_pnl"]
+            logger.info(
+                "📊 Daily risk state synchronized from confirmed trades: loss_used={}, pnl={}",
+                self._daily_loss_used,
+                self._daily_realized_pnl,
+            )
         await self._reconcile_before_trading()
         for trade in self.state_manager.get_open_trades_from_db():
             if trade.get("status") != "OPEN" or not trade.get("symbol"):
