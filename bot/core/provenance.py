@@ -30,6 +30,12 @@ class FillDetails:
     fee_source: FieldSource
     order_id: str = ""
     trade_ids: tuple[str, ...] = ()
+    fee_currency: str = ""
+    filled_at: str | None = None
+    reference_price: float | None = None
+    slippage_bps: float | None = None
+    mark_price: float | None = None
+    trigger_price: float | None = None
 
     @property
     def is_pnl_eligible(self) -> bool:
@@ -56,6 +62,12 @@ class FillDetails:
             "fee_source": self.fee_source.value,
             "order_id": self.order_id,
             "trade_ids": list(self.trade_ids),
+            "fee_currency": self.fee_currency,
+            "filled_at": self.filled_at,
+            "reference_price": self.reference_price,
+            "slippage_bps": self.slippage_bps,
+            "mark_price": self.mark_price,
+            "trigger_price": self.trigger_price,
         }
 
 

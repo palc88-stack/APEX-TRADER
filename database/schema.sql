@@ -186,6 +186,20 @@ CREATE TABLE IF NOT EXISTS trades (
     stop_loss DECIMAL(18, 8),
     take_profit_1 DECIMAL(18, 8),
     take_profit_2 DECIMAL(18, 8),
+    strategy_subtype VARCHAR(80),
+    rule_score DECIMAL(6, 4),
+    account_balance_at_entry DECIMAL(18, 8),
+    pnl_account_pct DECIMAL(10, 4),
+    entry_fee_currency VARCHAR(20),
+    exit_fee_currency VARCHAR(20),
+    entry_filled_at TIMESTAMPTZ,
+    exit_filled_at TIMESTAMPTZ,
+    entry_slippage_bps DECIMAL(18, 8),
+    exit_slippage_bps DECIMAL(18, 8),
+    entry_mark_price DECIMAL(30, 12),
+    exit_mark_price DECIMAL(30, 12),
+    entry_trigger_price DECIMAL(30, 12),
+    exit_trigger_price DECIMAL(30, 12),
 
     size_usd DECIMAL(18, 4) NOT NULL,
     margin_usd DECIMAL(18, 4),
@@ -232,6 +246,20 @@ ALTER TABLE trades ADD COLUMN IF NOT EXISTS entry_quantity DECIMAL(18, 8);
 ALTER TABLE trades ADD COLUMN IF NOT EXISTS remaining_quantity DECIMAL(18, 8);
 ALTER TABLE trades ADD COLUMN IF NOT EXISTS take_profit_1_algo_id TEXT;
 ALTER TABLE trades ADD COLUMN IF NOT EXISTS take_profit_2_algo_id TEXT;
+ALTER TABLE trades ADD COLUMN IF NOT EXISTS strategy_subtype VARCHAR(80);
+ALTER TABLE trades ADD COLUMN IF NOT EXISTS rule_score DECIMAL(6, 4);
+ALTER TABLE trades ADD COLUMN IF NOT EXISTS account_balance_at_entry DECIMAL(18, 8);
+ALTER TABLE trades ADD COLUMN IF NOT EXISTS pnl_account_pct DECIMAL(10, 4);
+ALTER TABLE trades ADD COLUMN IF NOT EXISTS entry_fee_currency VARCHAR(20);
+ALTER TABLE trades ADD COLUMN IF NOT EXISTS exit_fee_currency VARCHAR(20);
+ALTER TABLE trades ADD COLUMN IF NOT EXISTS entry_filled_at TIMESTAMPTZ;
+ALTER TABLE trades ADD COLUMN IF NOT EXISTS exit_filled_at TIMESTAMPTZ;
+ALTER TABLE trades ADD COLUMN IF NOT EXISTS entry_slippage_bps DECIMAL(18, 8);
+ALTER TABLE trades ADD COLUMN IF NOT EXISTS exit_slippage_bps DECIMAL(18, 8);
+ALTER TABLE trades ADD COLUMN IF NOT EXISTS entry_mark_price DECIMAL(30, 12);
+ALTER TABLE trades ADD COLUMN IF NOT EXISTS exit_mark_price DECIMAL(30, 12);
+ALTER TABLE trades ADD COLUMN IF NOT EXISTS entry_trigger_price DECIMAL(30, 12);
+ALTER TABLE trades ADD COLUMN IF NOT EXISTS exit_trigger_price DECIMAL(30, 12);
 
 -- فهارس لتسريع الاستعلامات المتكررة فعلياً في الكود:
 -- state_manager.get_open_trades_from_db() → .eq("status","OPEN")

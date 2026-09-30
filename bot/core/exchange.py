@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import math
 import os
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 import ccxt.async_support as ccxt
@@ -94,6 +95,14 @@ class ExchangeManager:
             raise ExchangeSafetyError(
                 f"{operation} blocked: ALLOW_NEW_ENTRIES is false"
             )
+
+    @staticmethod
+    def _optional_float(value: Any) -> Optional[float]:
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError):
+            return None
+        return parsed if math.isfinite(parsed) and parsed > 0 else None
 
     @staticmethod
     def _finite_positive(value: Any, field: str) -> float:
@@ -183,7 +192,12 @@ class ExchangeManager:
         candidates.sort(key=lambda row: row["liquidity_score"], reverse=True)
         return candidates[: max(1, int(limit))]
 
-    async def fetch_fill_details(self, order_id: str, symbol: str) -> FillDetails:
+    async def fetch_fill_details(
+        self,
+        order_id: str,
+        symbol: str,
+        reference_price: Optional[float] = None,
+    ) -> FillDetails:
         """Resolve execution facts without substituting ticker prices."""
         exchange = await self._ensure_ready()
         order: Dict[str, Any] = {}
@@ -199,6 +213,7 @@ class ExchangeManager:
         fee = 0.0
         fee_source = FieldSource.UNCONFIRMED
         trade_ids: list[str] = []
+        related: list[Dict[str, Any]] = []
 
         fee_info = order.get("fee") or {}
         fee_currency = str(fee_info.get("currency") or "").upper()
@@ -221,6 +236,26 @@ class ExchangeManager:
             except Exception as exc:
                 logger.warning("fetch_my_trades failed for {}: {}", order_id, exc)
 
+        info = order.get("info") or {}
+        mark_price = self._optional_float(
+            info.get("markPrice") or info.get("mark_price") or order.get("markPrice")
+        )
+        trigger_price = self._optional_float(
+            info.get("triggerPrice") or info.get("stopPrice") or order.get("triggerPrice")
+        )
+        timestamp = order.get("timestamp") or info.get("updateTime") or info.get("transactTime")
+        if not timestamp and related:
+            timestamp = max((t.get("timestamp") or 0) for t in related) or None
+        filled_at = None
+        if timestamp:
+            filled_at = datetime.fromtimestamp(float(timestamp) / 1000, tz=timezone.utc).isoformat()
+        if not fee_currency and related:
+            currencies = [str((t.get("fee") or {}).get("currency") or "").upper() for t in related]
+            fee_currency = next((currency for currency in currencies if currency), "")
+        slippage_bps = None
+        if reference_price and reference_price > 0 and average > 0:
+            slippage_bps = round((average - reference_price) / reference_price * 10000, 4)
+
         return FillDetails(
             price=average,
             price_source=price_source,
@@ -230,6 +265,12 @@ class ExchangeManager:
             fee_source=fee_source,
             order_id=str(order_id),
             trade_ids=tuple(trade_ids),
+            fee_currency=fee_currency,
+            filled_at=filled_at,
+            reference_price=float(reference_price) if reference_price else None,
+            slippage_bps=slippage_bps,
+            mark_price=mark_price,
+            trigger_price=trigger_price,
         )
 
     async def get_all_open_positions_result(self) -> QueryResult:

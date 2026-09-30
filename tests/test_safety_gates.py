@@ -138,7 +138,7 @@ def test_testnet_session_uses_dynamic_universe():
     assert 'AUTO_SYMBOL_SCAN: "false"' in workflow
 
 
-def test_testnet_session_is_scheduled_and_run_bot_is_read_only():
+def test_testnet_session_and_reconciliation_runner_are_safe():
     testnet = (ROOT / ".github/workflows/testnet-session.yml").read_text()
     run_bot = (ROOT / ".github/workflows/run-bot.yml").read_text()
     universe = (ROOT / ".github/workflows/universe-refresh.yml").read_text()
@@ -149,8 +149,10 @@ def test_testnet_session_is_scheduled_and_run_bot_is_read_only():
     assert 'ALLOW_LIVE_TRADING: "false"' in testnet
     assert 'AUTO_RECONCILE_CLOSE_ENABLED: "true"' in testnet
     assert 'AUTO_RECONCILE_CLOSE_LIVE: "false"' in testnet
-    assert 'TRADING_EXECUTION_ENABLED: "false"' in run_bot
+    assert 'TRADING_EXECUTION_ENABLED: "true"' in run_bot
     assert 'ALLOW_NEW_ENTRIES: "false"' in run_bot
+    assert 'AUTO_RECONCILE_CLOSE_ENABLED: "true"' in run_bot
+    assert 'AUTO_RECONCILE_CLOSE_LIVE: "false"' in run_bot
     assert "SUPABASE_WRITE_KEY: ${{ secrets.SUPABASE_WRITE_KEY }}" in run_bot
     assert 'TRADING_EXECUTION_ENABLED: "false"' in universe
     assert 'UNIVERSE_SIZE: "3"' in universe
