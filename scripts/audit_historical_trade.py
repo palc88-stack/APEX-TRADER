@@ -1,8 +1,8 @@
 """Audit a historical Binance Testnet trade using exchange-confirmed fills only.
 
-This command is read-only by default. It prints the exact order and related fills
-needed to repair a historical ledger row; it never infers fees from candles and
-never mutates Supabase unless a future, explicitly reviewed apply mode is added.
+This command is read-only by default. It prints the exact order, related fills,
+and nearby symbol fills needed to repair a historical ledger row; it never
+infers fees from candles and never mutates Supabase.
 """
 from __future__ import annotations
 
@@ -12,6 +12,20 @@ import os
 from datetime import datetime, timezone
 
 import ccxt
+
+
+def compact_fill(trade: dict) -> dict:
+    return {
+        "id": trade.get("id"),
+        "order": trade.get("order"),
+        "side": trade.get("side"),
+        "amount": trade.get("amount"),
+        "price": trade.get("price"),
+        "cost": trade.get("cost"),
+        "timestamp": trade.get("timestamp"),
+        "fee": trade.get("fee"),
+        "info": trade.get("info") or {},
+    }
 
 
 def main() -> None:
@@ -32,6 +46,11 @@ def main() -> None:
         order = exchange.fetch_order(args.trade_id, args.symbol)
         trades = exchange.fetch_my_trades(args.symbol, limit=100)
         related = [t for t in trades if str(t.get("order") or "") == str(args.trade_id)]
+        order_timestamp = int(order.get("timestamp") or 0)
+        nearby = [
+            t for t in trades
+            if order_timestamp - 60_000 <= int(t.get("timestamp") or 0) <= order_timestamp + 86_400_000
+        ]
         payload = {
             "audited_at": datetime.now(timezone.utc).isoformat(),
             "symbol": args.symbol,
@@ -45,20 +64,8 @@ def main() -> None:
                 "fee": order.get("fee"),
                 "info": order.get("info") or {},
             },
-            "fills": [
-                {
-                    "id": t.get("id"),
-                    "order": t.get("order"),
-                    "side": t.get("side"),
-                    "amount": t.get("amount"),
-                    "price": t.get("price"),
-                    "cost": t.get("cost"),
-                    "timestamp": t.get("timestamp"),
-                    "fee": t.get("fee"),
-                    "info": t.get("info") or {},
-                }
-                for t in related
-            ],
+            "fills": [compact_fill(t) for t in related],
+            "nearby_symbol_fills": [compact_fill(t) for t in nearby],
         }
         print(json.dumps(payload, indent=2, default=str))
         if not related:
