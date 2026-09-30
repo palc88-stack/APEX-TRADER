@@ -992,9 +992,19 @@ class ApexTraderBot:
                     self.state_manager.release_position_slot(
                         reservation_id=slot_reservation_id
                     )
-                logger.error(f"❌ خطأ في {symbol}: {e}", exc_info=True)
-                cycle_errors.append(f"{symbol}: {type(e).__name__}: {e}")
-                await self.telegram.send_error(f"Cycle Error [{symbol}]: {str(e)}")
+                message = str(e)
+                if "-2027" in message or "maximum allowable position" in message.lower():
+                    self._reconciliation_blocked_symbols.add(symbol)
+                    logger.warning(
+                        "⚠️ Binance rejected a new position for {} due to the current position/leverage limit; "
+                        "skipping this symbol for the remainder of this session: {}",
+                        symbol,
+                        message,
+                    )
+                    continue
+                logger.error("❌ خطأ في {}: {}", symbol, message, exc_info=True)
+                cycle_errors.append(f"{symbol}: {type(e).__name__}: {message}")
+                await self.telegram.send_error(f"Cycle Error [{symbol}]: {message}")
 
         if cycle_errors:
             raise RuntimeError("market cycle failed: " + " | ".join(cycle_errors))
@@ -1124,7 +1134,7 @@ if __name__ == "__main__":
         except KeyboardInterrupt:
             _logger.info("⛔ توقف يدوياً")
         except Exception as e:
-            _logger.error(f"❌ خطأ fatal: {e}", exc_info=True)
+            _logger.error("❌ خطأ fatal: {}", e, exc_info=True)
             raise
 
     asyncio.run(_main())
