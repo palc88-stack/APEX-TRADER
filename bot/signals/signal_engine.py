@@ -93,11 +93,14 @@ class SignalEngine:
             "mode": self.active_mode,
             "confidence": 0.0,
             "indicators": {},
+            "stop_loss_pct": None,
+            "take_profit_pct": None,
             "reason": "No valid signal detected",
         }
 
-        if df is None or df.empty or len(df) < 50:
-            logger.warning("⚠️ بيانات غير كافية للتحليل: {}", symbol)
+        # EMA200 لا يكون صالحًا قبل اكتمال 200 شمعة مغلقة.
+        if df is None or df.empty or len(df) < 200:
+            logger.warning("⚠️ بيانات غير كافية للتحليل/تدفئة EMA200: {}", symbol)
             return result
 
         try:
@@ -122,6 +125,8 @@ class SignalEngine:
                     "strategy": decision["strategy"],
                     "mode": self.active_mode,
                     "confidence": decision["confidence"],
+                    "stop_loss_pct": decision.get("stop_loss_pct"),
+                    "take_profit_pct": decision.get("take_profit_pct"),
                     "reason": decision["reason"],
                 })
                 logger.info(

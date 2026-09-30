@@ -116,10 +116,12 @@ class IndicatorCalculator:
         df: pd.DataFrame,
         period: int = 50,
     ) -> pd.Series:
+        # لا نُنتج EMA قبل اكتمال نافذة التدفئة؛ استخدام min_periods=1
+        # يجعل EMA200 يبدو صالحًا بعد شمعة أو شمعتين ويؤثر في قرارات الاتجاه.
         return df["close"].ewm(
             span=period,
             adjust=False,
-            min_periods=1,
+            min_periods=period,
         ).mean()
 
     @staticmethod

@@ -115,7 +115,7 @@ class MarketDataManager:
         self,
         symbol: str,
         timeframe: str = "5m",
-        limit: int = 100,
+        limit: int = 300,
     ) -> Optional[pd.DataFrame]:
         cache_key = (
             f"{self._exchange_name}:"
@@ -550,7 +550,7 @@ class MarketDataManager:
         self,
         symbol: str,
         timeframe: str = "5m",
-        limit: int = 100,
+        limit: int = 300,
     ) -> Optional[pd.DataFrame]:
         cache_key = (
             f"{self._exchange_name}:"

@@ -210,7 +210,24 @@ class StateManager:
             logger.error("❌ trade order ledger unavailable: Supabase is required")
             return None
         try:
-            result = self.client.table("trade_orders").insert(order_data).execute()
+            # CCXT uses ``open``/``closed`` while the SQL ledger uses
+            # ``submitted``/``filled``. Normalize before the status CHECK
+            # constraint can reject a valid exchange order record.
+            normalized = dict(order_data)
+            status_map = {
+                "open": "submitted",
+                "pending": "submitted",
+                "closed": "filled",
+                "cancelled": "canceled",
+            }
+            raw_status = str(normalized.get("status") or "unknown").lower()
+            normalized["status"] = status_map.get(raw_status, raw_status)
+            if normalized["status"] not in {
+                "submitted", "partially_filled", "filled", "canceled",
+                "rejected", "unknown", "needs_reconciliation",
+            }:
+                normalized["status"] = "unknown"
+            result = self.client.table("trade_orders").insert(normalized).execute()
             rows = list(getattr(result, "data", None) or [])
             return int(rows[0]["id"]) if rows and rows[0].get("id") is not None else None
         except Exception as e:
