@@ -358,6 +358,22 @@ class TelegramNotifier:
         )
         return await self.send(message)
 
+    async def send_reconciliation_closed(
+        self, symbol: str, order_id: str, price: float, quantity: float, fee: float
+    ) -> bool:
+        """Report an exchange-confirmed reduce-only reconciliation close."""
+        message = (
+            "⬡ <b>APEX TRADER</b>\n\n"
+            "✅ <b>تم إغلاق مصالحة تلقائياً</b>\n\n"
+            f"├ الزوج: <code>{escape(str(symbol))}</code>\n"
+            f"├ أمر reduce-only: <code>{escape(str(order_id))}</code>\n"
+            f"├ متوسط التنفيذ: <code>{price:.8f}</code>\n"
+            f"├ الكمية المنفذة: <code>{quantity:.8f}</code>\n"
+            f"└ الرسوم المؤكدة: <code>{fee:.8f}</code>\n\n"
+            "لم يتم احتساب PnL إلا بعد اكتمال بيانات الدخول والخروج والرسوم."
+        )
+        return await self.send(message)
+
     async def send_startup(
         self,
         balance: float,

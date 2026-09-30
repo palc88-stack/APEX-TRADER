@@ -51,6 +51,9 @@ assert "SUPABASE_SERVICE_KEY" not in worker
 assert 'BINANCE_TESTNET: "true"' in testnet_workflow
 assert 'ALLOW_LIVE_TRADING: "false"' in testnet_workflow
 assert "TRADING_SYMBOLS: BTC/USDT,ETH/USDT,SOL/USDT" in testnet_workflow
-assert 'SYMBOL_SCAN_LIMIT: "3"' in testnet_workflow
+assert 'UNIVERSE_SIZE: "20"' in testnet_workflow
+assert 'AUTO_SYMBOL_SCAN: "false"' in testnet_workflow
+assert 'AUTO_RECONCILE_CLOSE_ENABLED: "true"' in testnet_workflow
+assert 'AUTO_RECONCILE_CLOSE_LIVE: "false"' in testnet_workflow
 
 print("Current safety gates verified without network access or secrets.")

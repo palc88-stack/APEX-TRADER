@@ -147,8 +147,16 @@ def test_testnet_session_is_scheduled_and_run_bot_is_read_only():
     assert 'cron: "0 */2 * * *"' in testnet
     assert 'TRADING_EXECUTION_ENABLED: "true"' in testnet
     assert 'ALLOW_LIVE_TRADING: "false"' in testnet
+    assert 'AUTO_RECONCILE_CLOSE_ENABLED: "true"' in testnet
+    assert 'AUTO_RECONCILE_CLOSE_LIVE: "false"' in testnet
     assert 'TRADING_EXECUTION_ENABLED: "false"' in run_bot
     assert 'ALLOW_NEW_ENTRIES: "false"' in run_bot
     assert "SUPABASE_WRITE_KEY: ${{ secrets.SUPABASE_WRITE_KEY }}" in run_bot
     assert 'TRADING_EXECUTION_ENABLED: "false"' in universe
     assert 'UNIVERSE_SIZE: "3"' in universe
+
+
+def test_auto_reconcile_close_defaults_to_disabled():
+    config = (ROOT / "bot/config.py").read_text()
+    assert '"AUTO_RECONCILE_CLOSE_ENABLED", False' in config
+    assert '"AUTO_RECONCILE_CLOSE_LIVE", False' in config

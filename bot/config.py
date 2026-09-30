@@ -205,6 +205,12 @@ class Config:
     allow_new_entries: bool = field(
         default_factory=lambda: _env_bool("ALLOW_NEW_ENTRIES", False)
     )
+    auto_reconcile_close_enabled: bool = field(
+        default_factory=lambda: _env_bool("AUTO_RECONCILE_CLOSE_ENABLED", False)
+    )
+    auto_reconcile_close_live: bool = field(
+        default_factory=lambda: _env_bool("AUTO_RECONCILE_CLOSE_LIVE", False)
+    )
     universe_refresh_only: bool = field(
         default_factory=lambda: _env_bool("UNIVERSE_REFRESH_ONLY", False)
     )

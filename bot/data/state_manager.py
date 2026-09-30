@@ -270,6 +270,32 @@ class StateManager:
             "reconciliation_note": note,
         })
 
+    def mark_reconciliation_closed(
+        self,
+        trade: Dict[str, Any],
+        *,
+        order_id: str,
+        fill: Any,
+        close_reason: str,
+    ) -> bool:
+        """Close a reconciliation record only after exchange fill evidence exists."""
+        update = {
+            **trade,
+            "status": "CLOSED",
+            "closing_order_id": order_id,
+            "exit_price": float(fill.price),
+            "exit_quantity": float(fill.quantity),
+            "exit_fee": float(fill.fee),
+            "exit_price_source": fill.price_source.value,
+            "exit_quantity_source": fill.quantity_source.value,
+            "exit_fee_source": fill.fee_source.value,
+            "pnl_source": "unconfirmed",
+            "close_reason": close_reason,
+            "reconciliation_note": "automatically closed reduce-only after exchange fill confirmation",
+            "closed_at": datetime.now(timezone.utc).isoformat(),
+        }
+        return self.save_trade_state(update)
+
     def record_partial_close(self, partial_data: Dict[str, Any]) -> bool:
         """Persist a partial execution separately from the parent trade."""
         if not self.client:

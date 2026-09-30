@@ -37,6 +37,8 @@ jobs:
       ALLOW_LIVE_TRADING: "false"
       TRADING_EXECUTION_ENABLED: "true"
       ALLOW_NEW_ENTRIES: "true"
+      AUTO_RECONCILE_CLOSE_ENABLED: "true"
+      AUTO_RECONCILE_CLOSE_LIVE: "false"
       # The persisted dynamic universe is the source of truth for symbols.
       UNIVERSE_SIZE: "20"
       UNIVERSE_REFRESH_HOURS: "4"

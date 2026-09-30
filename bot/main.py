@@ -206,7 +206,64 @@ class ApexTraderBot:
                 ", ".join(sorted(orphans)),
             )
 
+        await self._auto_close_reconciliation_positions()
         await self._notify_reconciliation_required()
+
+    async def _auto_close_reconciliation_positions(self) -> None:
+        """Close reconciliation positions by reduce-only market order after explicit gating."""
+        enabled = bool(getattr(self.config, "auto_reconcile_close_enabled", False))
+        live_allowed = bool(getattr(self.config, "auto_reconcile_close_live", False))
+        if not enabled or (
+            str(getattr(self.config, "environment", "testnet")).lower() == "live"
+            and not live_allowed
+        ):
+            return
+
+        records = [
+            trade for trade in self.state_manager.get_open_trades_from_db()
+            if trade.get("status") == "NEEDS_RECONCILIATION" and trade.get("symbol")
+        ]
+        for trade in records:
+            symbol = str(trade["symbol"])
+            try:
+                order_id = str(trade.get("closing_order_id") or "")
+                if not order_id:
+                    order = await self.exchange.close_position(
+                        symbol=symbol,
+                        position_id=str(trade.get("id") or ""),
+                        reason="auto_reconciliation_reduce_only",
+                        price=0.0,
+                    )
+                    order_id = str(order.get("id") or order.get("orderId") or "")
+                    if not order_id:
+                        logger.error("❌ Auto reconciliation close returned no order id: {}", symbol)
+                        continue
+                    self.state_manager.save_trade_state({
+                        **trade,
+                        "closing_order_id": order_id,
+                        "reconciliation_note": "reduce-only close submitted; awaiting exchange fill confirmation",
+                    })
+
+                fill = await self.exchange.fetch_fill_details(order_id, symbol)
+                if fill.price <= 0 or fill.quantity <= 0:
+                    logger.warning("⏳ Reconciliation close fill not confirmed yet: {} {}", symbol, order_id)
+                    continue
+                if not self.state_manager.mark_reconciliation_closed(
+                    trade,
+                    order_id=order_id,
+                    fill=fill,
+                    close_reason="auto_reconciliation_reduce_only",
+                ):
+                    continue
+                await self.telegram.send_reconciliation_closed(
+                    symbol=symbol,
+                    order_id=order_id,
+                    price=fill.price,
+                    quantity=fill.quantity,
+                    fee=fill.fee,
+                )
+            except Exception as exc:
+                logger.error("❌ Auto reconciliation close failed for {}: {}", symbol, exc)
 
     async def _notify_reconciliation_required(self) -> None:
         """Notify once per persisted unresolved-state snapshot; never mutate positions."""
