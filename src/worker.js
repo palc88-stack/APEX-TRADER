@@ -76,6 +76,34 @@ async function supabaseRequest(env, tableOrPath, options = {}) {
   return text ? JSON.parse(text) : null;
 }
 
+async function withExecutionLease(env, leaseName, ownerId, task) {
+  const acquired = await supabaseRequest(env, "/rest/v1/rpc/acquire_execution_lease", {
+    method: "POST",
+    body: {
+      p_lease_name: leaseName,
+      p_owner_id: ownerId,
+      p_ttl_seconds: 120,
+      p_metadata: { provider: "cloudflare_worker", cron: leaseName },
+    },
+    prefer: "return=representation",
+  });
+
+  if (acquired !== true) {
+    console.log(JSON.stringify({ event: "lease_busy", lease_name: leaseName, owner_id: ownerId }));
+    return { skipped: true, reason: "lease_busy" };
+  }
+
+  try {
+    return await task();
+  } finally {
+    await supabaseRequest(env, "/rest/v1/rpc/release_execution_lease", {
+      method: "POST",
+      body: { p_lease_name: leaseName, p_owner_id: ownerId },
+      prefer: "return=minimal",
+    }).catch((error) => console.error(JSON.stringify({ event: "lease_release_error", error: String(error) })));
+  }
+}
+
 async function telegram(env, message) {
   const token = requireSecret(env, "TELEGRAM_BOT_TOKEN");
   const chatId = requireSecret(env, "TELEGRAM_CHAT_ID");
@@ -286,8 +314,12 @@ export default {
   async scheduled(controller, env, ctx) {
     const job = controller.cron;
     let task;
-    if (job === "0 2 * * *") task = reconcileDaily(env);
-    else if (job === "0 */4 * * *") task = refreshUniverse(env);
+    const ownerId = `cloudflare:${job}:${crypto.randomUUID()}`;
+    if (job === "0 2 * * *") {
+      task = withExecutionLease(env, "apex-trading-execution", ownerId, () => reconcileDaily(env));
+    } else if (job === "0 */4 * * *") {
+      task = withExecutionLease(env, "apex-universe-refresh", ownerId, () => refreshUniverse(env));
+    }
     else if (job === "*/5 * * * *") task = monitor(env);
     else task = Promise.resolve();
     // Never leave a scheduled rejection unhandled; log the real cause instead.

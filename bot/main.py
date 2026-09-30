@@ -66,6 +66,8 @@ class ApexTraderBot:
         logger.info("💗 بدء حلقة Heartbeat...")
         while True:
             try:
+                if self.state_manager.lease_acquired:
+                    self.state_manager.renew_execution_lease()
                 await self.state_manager.update_heartbeat()
                 # ✅ تحديث الحالة المالية كل دورة
                 try:
@@ -1015,17 +1017,25 @@ class ApexTraderBot:
         max_cycles = int(os.environ.get("APEX_RUN_CYCLES", 0) or 0)
         single_cycle = max_cycles > 0
 
-        await self.initialize()
-        if self.config.universe_refresh_only:
-            logger.info("✅ Exiting after Universe refresh-only run")
+        needs_execution_lease = bool(self.config.trading_execution_enabled)
+        if needs_execution_lease and not self.state_manager.acquire_execution_lease():
+            logger.warning("⏳ Another execution owner is active; skipping this run")
             return
-        heartbeat_task = asyncio.create_task(
-            self.start_heartbeat_loop(interval_seconds=10)
-        )
+
+        heartbeat_task = None
 
         try:
+            await self.initialize()
+            if self.config.universe_refresh_only:
+                logger.info("✅ Exiting after Universe refresh-only run")
+                return
+            heartbeat_task = asyncio.create_task(
+                self.start_heartbeat_loop(interval_seconds=10)
+            )
             cycles_done = 0
             while True:
+                if self.state_manager.lease_lost:
+                    raise RuntimeError("execution lease lost; refusing further trading cycles")
                 await self.process_market_cycle()
                 cycles_done += 1
                 await self.state_manager.mark_cycle_completed()
@@ -1036,15 +1046,18 @@ class ApexTraderBot:
         except asyncio.CancelledError:
             logger.info("Shutting down...")
         finally:
-            heartbeat_task.cancel()
-            try:
-                await heartbeat_task
-            except asyncio.CancelledError:
-                pass
+            if heartbeat_task is not None:
+                heartbeat_task.cancel()
+                try:
+                    await heartbeat_task
+                except asyncio.CancelledError:
+                    pass
             # ✅ كتابة حالة الخروج واجبة — تضمن ظهور البيانات حتى في الدورة الواحدة
             await self.state_manager.update_heartbeat()
             await self.state_manager.mark_bot_stopped()
             await self.shutdown()
+            if needs_execution_lease:
+                self.state_manager.release_execution_lease()
 
     async def shutdown(self) -> None:
         logger.info("Shutdown...")

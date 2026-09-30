@@ -14,6 +14,16 @@ close exchange orders.
 - `0 */4 * * *`: refresh the top-20 Binance USD-M liquidity universe.
 - `0 2 * * *`: daily read-only Binance/Supabase reconciliation and Telegram alert.
 
+Before the daily reconciliation runs, the Worker acquires the shared
+`apex-trading-execution` lease in Supabase. If GitHub Actions or another owner
+holds it, the Worker skips the run without touching orders. The four-hour
+universe refresh uses the separate `apex-universe-refresh` lease.
+
+The Worker remains read-only with respect to exchange orders: it never opens,
+cancels, or closes an order. The shared trading lease is a guardrail so a
+future write-capable reconciliation path cannot run concurrently with the
+GitHub Actions bot.
+
 The four-hour universe schedule is intentionally removed from GitHub Actions to
 avoid duplicate snapshot activation. `.github/workflows/universe-refresh.yml`
 remains available through manual dispatch as a fallback.
