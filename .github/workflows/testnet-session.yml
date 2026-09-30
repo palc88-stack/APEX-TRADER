@@ -94,3 +94,18 @@ jobs:
 
       - name: Run bounded Binance Testnet polling session
         run: python -m bot.main
+
+      - name: Verify Binance Testnet ↔ Supabase consistency
+        if: always()
+        run: |
+          mkdir -p artifacts
+          python scripts/verify_testnet_consistency.py \
+            --output "artifacts/consistency-${GITHUB_RUN_ID}.json"
+
+      - name: Upload consistency report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: testnet-consistency-${{ github.run_id }}
+          path: artifacts/consistency-${{ github.run_id }}.json
+          if-no-files-found: warn
