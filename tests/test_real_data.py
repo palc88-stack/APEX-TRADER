@@ -71,7 +71,7 @@ class TestRealDataIntegrity:
         async def _get_data():
             from bot.data.market_data import MarketDataManager
             mgr = MarketDataManager()
-            # EMA200 يحتاج إلى 200 شمعة مغلقة على الأقل، مع هامش للتدفئة.
+            # EMA200 requires a sufficiently warmed real-data window.
             df = await mgr.get_ohlcv("BTC/USDT", "5m", 300)
             await mgr.close()
             return df

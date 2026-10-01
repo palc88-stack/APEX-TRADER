@@ -80,7 +80,8 @@ def test_worker_monitors_all_unresolved_pairs_without_execution():
     assert "status=eq.NEEDS_RECONCILIATION" in worker
     assert "getUnresolvedTrades" in worker
     assert "needs_reconciliation:" in worker
-    assert "لم يتم تعديل أوامر تلقائيًا" in worker
+    assert "يجري الإغلاق الآلي في Testnet" in worker
+    assert "botExpectedToRun" in worker
     assert "place_order" not in worker
     assert "close_position" not in worker
 

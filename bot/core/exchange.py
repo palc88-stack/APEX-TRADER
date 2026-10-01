@@ -212,25 +212,38 @@ class ExchangeManager:
         quantity_source = FieldSource.EXCHANGE_FILL if filled > 0 else FieldSource.UNCONFIRMED
         fee = 0.0
         fee_source = FieldSource.UNCONFIRMED
+        fee_currency = ""
         trade_ids: list[str] = []
         related: list[Dict[str, Any]] = []
 
         fee_info = order.get("fee") or {}
         fee_currency = str(fee_info.get("currency") or "").upper()
         fee_cost = float(fee_info.get("cost") or 0.0)
-        if fee_cost >= 0 and fee_currency in {"USDT", "BUSD"}:
+        if fee_cost >= 0 and fee_currency in {"USDT", "BUSD", "USDC"}:
             fee, fee_source = fee_cost, FieldSource.EXCHANGE_FILL
         else:
             try:
                 trades = await exchange.fetch_my_trades(symbol, limit=100)
                 related = [t for t in trades if str(t.get("order") or "") == str(order_id)]
                 if related:
-                    currencies = {
-                        str((t.get("fee") or {}).get("currency") or "").upper()
-                        for t in related
-                    }
-                    if currencies.issubset({"USDT", "BUSD"}):
-                        fee = sum(float((t.get("fee") or {}).get("cost") or 0.0) for t in related)
+                    currencies = set()
+                    costs = []
+                    for trade in related:
+                        info = trade.get("info") or {}
+                        trade_fee = trade.get("fee") or {}
+                        currency = str(
+                            trade_fee.get("currency")
+                            or info.get("commissionAsset")
+                            or ""
+                        ).upper()
+                        cost = trade_fee.get("cost")
+                        if cost is None:
+                            cost = info.get("commission")
+                        currencies.add(currency)
+                        costs.append(float(cost or 0.0))
+                    if currencies and currencies.issubset({"USDT", "BUSD", "USDC"}):
+                        fee = sum(costs)
+                        fee_currency = next(iter(currencies))
                         fee_source = FieldSource.EXCHANGE_FILL
                     trade_ids = [str(t.get("id")) for t in related if t.get("id")]
             except Exception as exc:
@@ -263,6 +276,7 @@ class ExchangeManager:
             quantity_source=quantity_source,
             fee=fee,
             fee_source=fee_source,
+            fee_currency=fee_currency,
             order_id=str(order_id),
             trade_ids=tuple(trade_ids),
             fee_currency=fee_currency,

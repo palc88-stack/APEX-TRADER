@@ -221,7 +221,13 @@ class ApexTraderBot:
         await self._notify_reconciliation_required()
 
     async def _auto_close_reconciliation_positions(self) -> None:
-        """Close reconciliation positions by reduce-only market order after explicit gating."""
+        """Resolve reconciliation records without repeating close orders.
+
+        A zero Binance position is authoritative for exposure: resolve the
+        local record as flat without inventing an exit price or PnL. When a
+        position still exists, submit at most one reduce-only close and wait
+        for an exchange-confirmed fill on later runs.
+        """
         enabled = bool(getattr(self.config, "auto_reconcile_close_enabled", False))
         live_allowed = bool(getattr(self.config, "auto_reconcile_close_live", False))
         if not enabled or (
@@ -230,6 +236,17 @@ class ApexTraderBot:
         ):
             return
 
+        positions_result = await self.exchange.get_all_open_positions_result()
+        if not positions_result.ok:
+            logger.error("❌ Cannot auto-reconcile: exchange position query failed")
+            return
+        exchange_positions = {
+            str(position.get("symbol")): position
+            for position in positions_result.data
+            if position.get("symbol")
+            and abs(float(position.get("contracts") or position.get("positionAmt") or 0)) > 0
+        }
+
         records = [
             trade for trade in self.state_manager.get_open_trades_from_db()
             if trade.get("status") == "NEEDS_RECONCILIATION" and trade.get("symbol")
@@ -237,6 +254,17 @@ class ApexTraderBot:
         for trade in records:
             symbol = str(trade["symbol"])
             try:
+                # Binance confirms there is no remaining exposure. Do not
+                # place an order and do not fabricate an exit fill or PnL.
+                if symbol not in exchange_positions:
+                    if self.state_manager.mark_reconciliation_flat(
+                        trade,
+                        "exchange position is zero; no exit fill was available for automatic accounting",
+                    ):
+                        logger.warning("✅ Auto-resolved flat reconciliation record: {}", symbol)
+                    continue
+
+                # A persisted closing_order_id makes this path idempotent.
                 order_id = str(trade.get("closing_order_id") or "")
                 if not order_id:
                     order = await self.exchange.close_position(
@@ -494,6 +522,7 @@ class ApexTraderBot:
                                 "price_source": partial_fill.price_source.value,
                                 "quantity_source": partial_fill.quantity_source.value,
                                 "fee_source": partial_fill.fee_source.value,
+                                "fee_currency": partial_fill.fee_currency,
                                 "raw_payload": partial_fill.as_record(),
                             })
                             self.state_manager.record_trading_event(
@@ -522,6 +551,7 @@ class ApexTraderBot:
                                 "price_source": partial_fill.price_source.value,
                                 "quantity_source": partial_fill.quantity_source.value,
                                 "fee_source": partial_fill.fee_source.value,
+                                "fee_currency": partial_fill.fee_currency,
                                 "pnl_source": "exchange_fill",
                                 "exchange_order_id": partial_order_id,
                             }):
@@ -621,6 +651,7 @@ class ApexTraderBot:
                             "price_source": fill.price_source.value,
                             "quantity_source": fill.quantity_source.value,
                             "fee_source": fill.fee_source.value,
+                            "fee_currency": fill.fee_currency,
                             "raw_payload": fill.as_record(),
                         })
                         self.state_manager.record_trading_event(
@@ -714,10 +745,9 @@ class ApexTraderBot:
                     continue
 
                 # 3. توليد إشارة جديدة
-                df_with_indicators = self.indicators.calculate_all(candles)
-                signal_result = self.signal_engine.evaluate_market(
-                    df_with_indicators, symbol
-                )
+                # SignalEngine removes the live candle and evaluates only the
+                # last closed candle. Keep the live ticker for execution only.
+                signal_result = self.signal_engine.evaluate_market(candles, symbol)
 
                 from bot.signals.signal_engine import TradeDirection
                 action_val = signal_result.get("action")
@@ -734,11 +764,16 @@ class ApexTraderBot:
                 # 4. حساب الأسعار وتنفيذ الأمر
                 entry_price = current_price
                 risk_cfg = self.config.risk
-                # الاستراتيجية قد تحدد نسبًا خاصة بها (مثل SCALPING).
-                # القيم العامة تبقى fallback للاستراتيجيات التي لا تحدد أهدافًا.
-                sl_pct = float(signal_result.get("stop_loss_pct") or risk_cfg.default_sl_pct / 100)
-                tp1_pct = float(signal_result.get("take_profit_pct") or risk_cfg.tp1_pct / 100)
-                tp2_pct = float(signal_result.get("take_profit_pct") or risk_cfg.tp2_pct / 100)
+                # Prefer strategy-specific percentages when supplied by the
+                # remote strategy contract; otherwise derive them from the
+                # strategy price levels generated on the closed candle.
+                reference_price = float(signal_result.get("indicators", {}).get("close") or entry_price)
+                configured_sl = signal_result.get("stop_loss")
+                configured_tp1 = signal_result.get("take_profit_1")
+                configured_tp2 = signal_result.get("take_profit_2")
+                sl_pct = float(signal_result.get("stop_loss_pct") or (abs(float(configured_sl) - reference_price) / reference_price if configured_sl else risk_cfg.default_sl_pct / 100))
+                tp1_pct = float(signal_result.get("take_profit_pct") or (abs(float(configured_tp1) - reference_price) / reference_price if configured_tp1 else risk_cfg.tp1_pct / 100))
+                tp2_pct = float(signal_result.get("take_profit_pct") or (abs(float(configured_tp2) - reference_price) / reference_price if configured_tp2 else risk_cfg.tp2_pct / 100))
                 leverage = risk_cfg.max_leverage
 
                 if str(action_val).upper() in ("LONG", "BUY"):
@@ -899,6 +934,7 @@ class ApexTraderBot:
                     "price_source": entry_fill.price_source.value,
                     "quantity_source": entry_fill.quantity_source.value,
                     "fee_source": entry_fill.fee_source.value,
+                    "fee_currency": entry_fill.fee_currency,
                     "raw_payload": entry_fill.as_record(),
                 })
                 self.state_manager.record_trading_event(

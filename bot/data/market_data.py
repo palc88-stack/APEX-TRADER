@@ -363,7 +363,7 @@ class MarketDataManager:
         self,
         symbols: list,
         timeframe: str = "5m",
-        limit: int = 100,
+        limit: int = 300,
     ) -> Dict[str, pd.DataFrame]:
         tasks = [
             self.get_ohlcv(
@@ -801,7 +801,7 @@ class MarketDataManager:
         self,
         symbols: list,
         timeframe: str = "5m",
-        limit: int = 100,
+        limit: int = 300,
     ) -> Dict[str, pd.DataFrame]:
         tasks = [
             self.get_ohlcv(

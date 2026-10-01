@@ -36,6 +36,7 @@ class StrategyRouter:
                         "confidence": explosion.confidence,
                         "rule_score": explosion.confidence,
                         "reason": explosion.reason,
+                        **self._levels("EXPLOSION", explosion.direction, float(latest["close"])),
                     })
 
         if self.mode == "HUNTER":
@@ -62,6 +63,9 @@ class StrategyRouter:
                         getattr(self.scalping_strategy, "target_profit_pct", 0.005),
                     )),
                     "reason": scalp.get("reason", "Validated scalping setup"),
+                    "stop_loss": scalp.get("stop_loss"),
+                    "take_profit_1": scalp.get("take_profit"),
+                    "take_profit_2": scalp.get("take_profit"),
                 })
 
         if not candidates:
@@ -86,6 +90,7 @@ class StrategyRouter:
                 "confidence": 0.85,
                 "rule_score": 0.85,
                 "reason": "Bullish trend pullback + RSI oversold.",
+                **self._levels("HUNTER", "LONG", close),
             }
         if close < ema_200 and rsi > 60 and self._passes_filters("SELL", latest, df):
             return {
@@ -95,8 +100,27 @@ class StrategyRouter:
                 "confidence": 0.85,
                 "rule_score": 0.85,
                 "reason": "Bearish trend rally + RSI overbought.",
+                **self._levels("HUNTER", "SHORT", close),
             }
         return None
 
     def _passes_filters(self, action: str, latest: pd.Series, df: pd.DataFrame) -> bool:
         return bool(self.filters.validate_signal(action, latest, df))
+
+    def _levels(self, strategy: str, direction: str, close: float) -> dict[str, float]:
+        config = getattr(self.scalping_strategy, "config", None)
+        risk = getattr(config, "risk", config)
+        if strategy in {"HUNTER", "EXPLOSION"}:
+            sl_pct = float(getattr(risk, "default_sl_pct", 1.5)) / 100.0
+            tp1_pct = float(getattr(risk, "tp1_pct", 1.0)) / 100.0
+            tp2_pct = float(getattr(risk, "tp2_pct", 2.5)) / 100.0
+        else:
+            sl_pct = float(getattr(self.scalping_strategy, "max_stop_loss_pct", 0.003))
+            tp1_pct = float(getattr(self.scalping_strategy, "target_profit_pct", 0.005))
+            tp2_pct = tp1_pct
+        long = str(direction).upper() in {"LONG", "BUY"}
+        return {
+            "stop_loss": close * (1.0 - sl_pct) if long else close * (1.0 + sl_pct),
+            "take_profit_1": close * (1.0 + tp1_pct) if long else close * (1.0 - tp1_pct),
+            "take_profit_2": close * (1.0 + tp2_pct) if long else close * (1.0 - tp2_pct),
+        }

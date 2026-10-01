@@ -42,3 +42,37 @@ def test_hunter_is_an_aggregate_mode_not_a_fake_strategy():
     assert engine.active_mode == "HUNTER"
     assert engine.scalping_strategy is not None
     assert engine.explosion_detector is not None
+
+
+def test_ema200_requires_full_warmup():
+    from bot.signals.indicators import IndicatorCalculator
+
+    df = pd.DataFrame({"close": range(1, 201)})
+    ema = IndicatorCalculator.calculate_ema(df, period=200)
+    assert ema.iloc[:-1].isna().all()
+    assert pd.notna(ema.iloc[-1])
+
+
+def test_strategy_router_preserves_scalping_exit_levels():
+    from bot.strategies.router import StrategyRouter
+
+    class Filters:
+        def validate_signal(self, action, latest, df):
+            return True
+
+    class Scalp:
+        config = SimpleNamespace(risk=SimpleNamespace(default_sl_pct=1.5, tp1_pct=1.0, tp2_pct=2.5))
+        max_stop_loss_pct = 0.003
+        target_profit_pct = 0.005
+
+        def evaluate_scalp_setup(self, df, symbol):
+            return {"action": "BUY", "stop_loss": 99.7, "take_profit": 100.5}
+
+    class NoExplosion:
+        def detect(self, df, symbol):
+            return None
+
+    router = StrategyRouter("SCALPING", Filters(), NoExplosion(), Scalp())
+    decision = router.evaluate(pd.DataFrame([{"close": 100, "volume": 10, "rsi": 30, "macd": 1, "macd_signal": 0}]), "BTC/USDT")
+    assert decision["stop_loss"] == 99.7
+    assert decision["take_profit_1"] == 100.5

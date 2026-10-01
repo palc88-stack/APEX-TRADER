@@ -305,15 +305,13 @@ class StateManager:
             logger.error("❌ trade order ledger unavailable: Supabase is required")
             return None
         try:
-            # CCXT uses ``open``/``closed`` while the SQL ledger uses
-            # ``submitted``/``filled``. Normalize before the status CHECK
-            # constraint can reject a valid exchange order record.
+            # Normalize CCXT states to the SQL ledger contract.
             normalized = dict(order_data)
             status_map = {
-                "open": "submitted",
-                "pending": "submitted",
-                "closed": "filled",
-                "cancelled": "canceled",
+                "open": "submitted", "pending": "submitted", "new": "submitted",
+                "closed": "filled", "partially-filled": "partially_filled",
+                "partial": "partially_filled", "cancelled": "canceled",
+                "rejected": "rejected",
             }
             raw_status = str(normalized.get("status") or "unknown").lower()
             normalized["status"] = status_map.get(raw_status, raw_status)
@@ -425,6 +423,29 @@ class StateManager:
             "closed_at": datetime.now(timezone.utc).isoformat(),
         }
         return self.save_trade_state(update)
+
+    def mark_reconciliation_flat(self, trade: Dict[str, Any], note: str) -> bool:
+        """Resolve a local record when Binance confirms zero exposure.
+
+        No exit price, fee, or PnL is fabricated: accounting remains
+        unconfirmed and is excluded from realized-PnL summaries.
+        """
+        return self.save_trade_state({
+            **trade,
+            "status": "RECONCILED_FLAT",
+            "close_reason": "reconciled_exchange_flat",
+            "exit_price": None,
+            "exit_quantity": 0,
+            "exit_fee": None,
+            "exit_price_source": "unconfirmed",
+            "exit_quantity_source": "exchange_position_zero",
+            "exit_fee_source": "unconfirmed",
+            "pnl": None,
+            "pnl_pct": None,
+            "pnl_source": "unconfirmed",
+            "reconciliation_note": note,
+            "closed_at": datetime.now(timezone.utc).isoformat(),
+        })
 
     def record_partial_close(self, partial_data: Dict[str, Any]) -> bool:
         """Persist a partial execution separately from the parent trade."""

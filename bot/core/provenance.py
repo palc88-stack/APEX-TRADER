@@ -28,6 +28,7 @@ class FillDetails:
     quantity_source: FieldSource
     fee: float
     fee_source: FieldSource
+    fee_currency: str = ""
     order_id: str = ""
     trade_ids: tuple[str, ...] = ()
     fee_currency: str = ""
@@ -60,6 +61,7 @@ class FillDetails:
             "quantity_source": self.quantity_source.value,
             "fee": self.fee,
             "fee_source": self.fee_source.value,
+            "fee_currency": self.fee_currency,
             "order_id": self.order_id,
             "trade_ids": list(self.trade_ids),
             "fee_currency": self.fee_currency,

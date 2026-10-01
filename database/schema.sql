@@ -238,7 +238,7 @@ ALTER TABLE trades ALTER COLUMN id TYPE TEXT USING id::text;
 
 ALTER TABLE trades DROP CONSTRAINT IF EXISTS trades_pnl_check;
 ALTER TABLE trades ADD CONSTRAINT trades_pnl_check
-    CHECK (status IN ('OPEN', 'NEEDS_RECONCILIATION') OR pnl IS NOT NULL);
+    CHECK (status IN ('OPEN', 'NEEDS_RECONCILIATION', 'RECONCILED_FLAT') OR pnl IS NOT NULL) NOT VALID;
 
 ALTER TABLE trades ADD COLUMN IF NOT EXISTS margin_usd DECIMAL(18, 4);
 ALTER TABLE trades ADD COLUMN IF NOT EXISTS notional_usd DECIMAL(18, 4);
@@ -260,6 +260,7 @@ ALTER TABLE trades ADD COLUMN IF NOT EXISTS entry_mark_price DECIMAL(30, 12);
 ALTER TABLE trades ADD COLUMN IF NOT EXISTS exit_mark_price DECIMAL(30, 12);
 ALTER TABLE trades ADD COLUMN IF NOT EXISTS entry_trigger_price DECIMAL(30, 12);
 ALTER TABLE trades ADD COLUMN IF NOT EXISTS exit_trigger_price DECIMAL(30, 12);
+ALTER TABLE trades ADD COLUMN IF NOT EXISTS exit_quantity DECIMAL(18, 8);
 
 -- فهارس لتسريع الاستعلامات المتكررة فعلياً في الكود:
 -- state_manager.get_open_trades_from_db() → .eq("status","OPEN")
@@ -288,7 +289,7 @@ CREATE INDEX IF NOT EXISTS idx_partial_closes_trade_id
     ON partial_closes (trade_id, created_at DESC);
 ALTER TABLE trades DROP CONSTRAINT IF EXISTS trades_status_check;
 ALTER TABLE trades ADD CONSTRAINT trades_status_check
-    CHECK (status IN ('OPEN', 'CLOSED', 'NEEDS_RECONCILIATION'));
+    CHECK (status IN ('OPEN', 'CLOSED', 'NEEDS_RECONCILIATION', 'RECONCILED_FLAT'));
 ALTER TABLE partial_closes ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS authenticated_read_partial_closes ON partial_closes;
 CREATE POLICY authenticated_read_partial_closes ON partial_closes

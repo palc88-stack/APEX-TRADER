@@ -266,6 +266,8 @@ async function monitor(env) {
     active_slots: state?.active_slots ?? null,
     unresolved_count: state?.unresolved_trades ?? null,
     heartbeat_at: state?.heartbeat_at || null,
+    bot_status: state?.bot_status || "unknown",
+    is_running: state?.is_running === true,
     reconciliation_status: recon?.status || "unknown",
     confirmed_realized_pnl: summary?.[0]?.confirmed_realized_pnl ?? null,
     unresolved_pairs: (unresolved || []).map((trade) => ({
@@ -287,11 +289,12 @@ async function monitor(env) {
       "⬡ <b>APEX TRADER - مصالحة معلقة</b>\n\n" +
       `🚨 <b>${unresolved.length} زوج/أزواج تحتاج مراجعة</b>\n` +
       `${pairs}\n\n` +
-      "⛔ الدخول الجديد محجوب لهذه الحالات فقط؛ لم يتم تعديل أوامر تلقائيًا."
+      "⛔ الدخول الجديد محجوب لهذه الحالات فقط؛ يجري الإغلاق الآلي في Testnet عند تفعيل البوابة، دون تبنّي مركز أو اختلاق Fill."
     );
   }
   const heartbeatMs = state?.heartbeat_at ? Date.parse(state.heartbeat_at) : NaN;
-  if (!Number.isFinite(heartbeatMs) || Date.now() - heartbeatMs > 10 * 60 * 1000) {
+  const botExpectedToRun = state?.is_running === true && state?.bot_status === "running";
+  if (botExpectedToRun && (!Number.isFinite(heartbeatMs) || Date.now() - heartbeatMs > 10 * 60 * 1000)) {
     await sendDedupedMonitorAlert(
       env,
       "stale_heartbeat",

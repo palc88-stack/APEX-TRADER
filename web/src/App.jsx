@@ -316,8 +316,10 @@ function Dashboard() {
       ? null
       : Math.max(0, Math.floor((now - heartbeatTimestamp) / 60000));
 
+  const botExpectedToRun =
+    status?.is_running === true && status?.bot_status === "running";
   const stale =
-    heartbeatAgeMinutes === null || heartbeatAgeMinutes > 15;
+    botExpectedToRun && (heartbeatAgeMinutes === null || heartbeatAgeMinutes > 15);
 
   const lossLimit = Number(status?.daily_loss_limit_usd);
   const lossUsed = Number(

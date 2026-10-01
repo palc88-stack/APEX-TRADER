@@ -121,6 +121,7 @@ class IndicatorCalculator:
         return df["close"].ewm(
             span=period,
             adjust=False,
+            # Do not expose a synthetic warm-up value as a real trend signal.
             min_periods=period,
         ).mean()
 

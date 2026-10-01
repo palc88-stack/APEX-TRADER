@@ -96,15 +96,19 @@ class SignalEngine:
             "stop_loss_pct": None,
             "take_profit_pct": None,
             "reason": "No valid signal detected",
+            "stop_loss": None,
+            "take_profit_1": None,
+            "take_profit_2": None,
         }
 
-        # EMA200 لا يكون صالحًا قبل اكتمال 200 شمعة مغلقة.
-        if df is None or df.empty or len(df) < 200:
-            logger.warning("⚠️ بيانات غير كافية للتحليل/تدفئة EMA200: {}", symbol)
+        # Require one current row plus 200 closed candles for EMA200.
+        if df is None or df.empty or len(df) < 202:
+            logger.warning("⚠️ بيانات غير كافية لتدفئة EMA200: {}", symbol)
             return result
 
         try:
-            df_analyzed = self.indicator_calculator.calculate_all(df)
+            df_closed = df.iloc[:-1].copy()
+            df_analyzed = self.indicator_calculator.calculate_all(df_closed)
             if df_analyzed is None or df_analyzed.empty:
                 return result
 
@@ -118,6 +122,10 @@ class SignalEngine:
                 "bb_lower": float(latest.get("bb_lower", close)),
             }
 
+            if pd.isna(latest.get("ema_200")) or pd.isna(latest.get("rsi")):
+                logger.warning("⚠️ مؤشرات غير دافئة بعد: {}", symbol)
+                return result
+
             decision = self.strategy_router.evaluate(df_analyzed, symbol)
             if decision:
                 result.update({
@@ -128,6 +136,9 @@ class SignalEngine:
                     "stop_loss_pct": decision.get("stop_loss_pct"),
                     "take_profit_pct": decision.get("take_profit_pct"),
                     "reason": decision["reason"],
+                    "stop_loss": decision.get("stop_loss"),
+                    "take_profit_1": decision.get("take_profit_1"),
+                    "take_profit_2": decision.get("take_profit_2"),
                 })
                 logger.info(
                     "✅ StrategyRouter signal for {}: {} via {} (confidence={:.2f})",
