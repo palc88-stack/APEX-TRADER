@@ -279,7 +279,6 @@ class ExchangeManager:
             fee_currency=fee_currency,
             order_id=str(order_id),
             trade_ids=tuple(trade_ids),
-            fee_currency=fee_currency,
             filled_at=filled_at,
             reference_price=float(reference_price) if reference_price else None,
             slippage_bps=slippage_bps,
