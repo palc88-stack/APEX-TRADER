@@ -62,6 +62,12 @@ class IndicatorCalculator:
                 period=14,
             )
 
+            risk_config = getattr(self.config, "risk", None)
+            if risk_config is None and isinstance(self.config, dict):
+                risk_config = self.config.get("risk")
+            atr_period = max(2, int(getattr(risk_config, "atr_period", 14)))
+            result["atr_value"] = self.calculate_atr(result, period=atr_period)
+
             macd, macd_signal, macd_hist = (
                 self.calculate_macd(
                     result,
@@ -100,6 +106,20 @@ class IndicatorCalculator:
                 error,
             )
             return df
+
+    @staticmethod
+    def calculate_atr(df: pd.DataFrame, period: int = 14) -> pd.Series:
+        """Average True Range used for stop distance, never as a profit forecast."""
+        previous_close = df["close"].astype(float).shift(1)
+        true_range = pd.concat(
+            [
+                df["high"].astype(float) - df["low"].astype(float),
+                (df["high"].astype(float) - previous_close).abs(),
+                (df["low"].astype(float) - previous_close).abs(),
+            ],
+            axis=1,
+        ).max(axis=1)
+        return true_range.rolling(window=period, min_periods=period).mean()
 
     @staticmethod
     def calculate_sma(

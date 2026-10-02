@@ -37,6 +37,22 @@ remains available through manual dispatch as a fallback.
 - `TELEGRAM_BOT_TOKEN`
 - `TELEGRAM_CHAT_ID`
 
+## Non-secret Worker variables
+
+The Worker configuration carries these non-secret observability and Testnet
+guardrail variables:
+
+- `SUBTYPE_REPORT_BATCH_SIZE=10`
+- `ATR_PERIOD=14`
+- `ATR_STOP_MULTIPLIER=2.0`
+- `MAX_LEVERAGE=5`
+- `MAX_RISK_PER_TRADE_PCT=1.0`
+- `MAX_RISK_PER_TRADE_USD=10.0`
+
+The Worker remains read-only and does not place exchange orders. The Python bot
+receives the authoritative risk settings through GitHub Actions environment
+variables; the Worker values are for monitoring and health consistency.
+
 These secrets are used only by scheduled server-side code and must never be
 placed in `web/dist` or browser environment variables.
 

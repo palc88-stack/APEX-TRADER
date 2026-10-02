@@ -252,10 +252,11 @@ async function refreshUniverse(env) {
 }
 
 async function monitor(env) {
-  const [risk, reconciliation, summary, unresolved] = await Promise.all([
+  const [risk, reconciliation, summary, subtypePerformance, unresolved] = await Promise.all([
     supabaseRequest(env, "dashboard_risk_state?select=*&limit=1"),
     supabaseRequest(env, "dashboard_reconciliation_status?select=*&limit=1"),
     supabaseRequest(env, "dashboard_trade_summary?select=*&limit=1"),
+    supabaseRequest(env, "dashboard_strategy_subtype_performance?select=*&order=closed_trades.desc&limit=20"),
     getUnresolvedTrades(env),
   ]);
   const state = risk?.[0] || null;
@@ -270,6 +271,8 @@ async function monitor(env) {
     is_running: state?.is_running === true,
     reconciliation_status: recon?.status || "unknown",
     confirmed_realized_pnl: summary?.[0]?.confirmed_realized_pnl ?? null,
+    subtype_batch_size: Number(env.SUBTYPE_REPORT_BATCH_SIZE || 10),
+    subtype_performance: subtypePerformance || [],
     unresolved_pairs: (unresolved || []).map((trade) => ({
       id: trade.id,
       symbol: trade.symbol,
@@ -310,7 +313,7 @@ export default {
   async fetch(request, env) {
     if (request.method !== "GET" && request.method !== "HEAD") return json({ error: "method_not_allowed" }, 405);
     const url = new URL(request.url);
-    if (url.pathname === "/api/health") return json({ service: "apex-trader-dashboard", worker: "ok", scheduler: "cron-enabled", stage: "strategy-router" });
+    if (url.pathname === "/api/health") return json({ service: "apex-trader-dashboard", worker: "ok", scheduler: "cron-enabled", stage: "strategy-router", subtype_batch_size: Number(env.SUBTYPE_REPORT_BATCH_SIZE || 10), testnet_only: env.ALLOW_LIVE_CRON !== "true" });
     return env.ASSETS.fetch(request);
   },
 

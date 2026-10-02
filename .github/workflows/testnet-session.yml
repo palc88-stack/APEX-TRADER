@@ -39,6 +39,12 @@ jobs:
       ALLOW_NEW_ENTRIES: "true"
       AUTO_RECONCILE_CLOSE_ENABLED: "true"
       AUTO_RECONCILE_CLOSE_LIVE: "false"
+      MAX_LEVERAGE: "5"
+      MAX_RISK_PER_TRADE_PCT: "1.0"
+      MAX_RISK_PER_TRADE_USD: "10.0"
+      ATR_PERIOD: "14"
+      ATR_STOP_MULTIPLIER: "2.0"
+      SUBTYPE_REPORT_BATCH_SIZE: "10"
       # One shared lease prevents overlap with reconciliation and Cloudflare.
       APEX_LEASE_NAME: apex-trading-execution
       APEX_LEASE_OWNER: github:testnet:${{ github.run_id }}
@@ -108,4 +114,20 @@ jobs:
         with:
           name: testnet-consistency-${{ github.run_id }}
           path: artifacts/consistency-${{ github.run_id }}.json
+          if-no-files-found: warn
+
+      - name: Analyze subtype performance milestone
+        if: always()
+        run: |
+          mkdir -p artifacts
+          python scripts/analyze_subtype_performance.py \
+            --batch-size "$SUBTYPE_REPORT_BATCH_SIZE" \
+            --output "artifacts/subtype-performance-${GITHUB_RUN_ID}.json"
+
+      - name: Upload subtype performance report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: subtype-performance-${{ github.run_id }}
+          path: artifacts/subtype-performance-${{ github.run_id }}.json
           if-no-files-found: warn

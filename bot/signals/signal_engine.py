@@ -90,6 +90,8 @@ class SignalEngine:
             "symbol": symbol,
             "action": TradeDirection.HOLD,
             "strategy": None,
+            "strategy_subtype": None,
+            "rule_score": 0.0,
             "mode": self.active_mode,
             "confidence": 0.0,
             "indicators": {},
@@ -120,6 +122,7 @@ class SignalEngine:
                 "ema_200": float(latest.get("ema_200", close)),
                 "bb_upper": float(latest.get("bb_upper", close)),
                 "bb_lower": float(latest.get("bb_lower", close)),
+                "atr_value": float(latest.get("atr_value", 0.0) or 0.0),
             }
 
             if pd.isna(latest.get("ema_200")) or pd.isna(latest.get("rsi")):
@@ -131,6 +134,8 @@ class SignalEngine:
                 result.update({
                     "action": decision["action"],
                     "strategy": decision["strategy"],
+                    "strategy_subtype": decision.get("strategy_subtype", "unknown"),
+                    "rule_score": decision.get("rule_score", decision.get("confidence", 0.0)),
                     "mode": self.active_mode,
                     "confidence": decision["confidence"],
                     "stop_loss_pct": decision.get("stop_loss_pct"),

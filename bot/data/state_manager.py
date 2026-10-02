@@ -284,6 +284,22 @@ class StateManager:
 
     # ─── Trades ───────────────────────────────────────────────────────────────
 
+    def record_strategy_signal(self, signal_data: Dict[str, Any]) -> bool:
+        """Persist an accepted non-HOLD signal without making it a fill."""
+        if not self.client:
+            logger.warning("⚠️ strategy signal not persisted: Supabase unavailable")
+            return False
+        try:
+            self.client.table("strategy_signals").upsert(
+                signal_data, on_conflict="idempotency_key"
+            ).execute()
+            return True
+        except Exception as e:
+            # Signal attribution must not crash the market cycle; the trade/fill
+            # ledger remains the source of accounting truth.
+            logger.error("❌ record_strategy_signal: {}", e)
+            return False
+
     def save_trade_state(self, trade_data: Dict[str, Any]) -> bool:
         """حفظ أو تحديث صفقة في Supabase."""
         if not self.client:

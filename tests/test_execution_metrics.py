@@ -4,6 +4,8 @@ import pandas as pd
 
 from bot.core.provenance import FieldSource, FillDetails
 from bot.core.risk_manager import RiskManager
+from bot.config import Config
+from bot.signals.indicators import IndicatorCalculator
 from bot.strategies.router import StrategyRouter
 
 
@@ -77,3 +79,33 @@ def test_risk_manager_sizes_are_bounded_by_stop_distance():
         stop_loss=99,
         direction="buy",
     )
+
+
+def test_atr_is_available_after_warmup():
+    frame = pd.DataFrame({
+        "open": [100.0 + i for i in range(20)],
+        "high": [101.0 + i for i in range(20)],
+        "low": [99.0 + i for i in range(20)],
+        "close": [100.5 + i for i in range(20)],
+        "volume": [1000.0] * 20,
+    })
+    result = IndicatorCalculator().calculate_all(frame)
+    assert result["atr_value"].iloc[:13].isna().all()
+    assert result["atr_value"].iloc[-1] > 0
+
+
+def test_atr_position_size_uses_dollar_risk_and_leverage():
+    bot = object.__new__(__import__("bot.main", fromlist=["ApexTraderBot"]).ApexTraderBot)
+    bot._current_balance = 1000.0
+    bot.config = Config()
+    bot.config.risk.max_risk_per_trade_usd = 10.0
+    bot.config.risk.max_risk_per_trade_pct = 2.0
+    bot.config.risk.max_position_pct = 10.0
+    # Entry 100, ATR stop distance 2*1.5 = 3; notional = 10 / 3 * 100.
+    margin = bot._calculate_position_size(
+        entry_price=100.0,
+        stop_loss=97.0,
+        leverage=5,
+        account_balance=1000.0,
+    )
+    assert margin == 66.67

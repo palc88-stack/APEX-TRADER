@@ -148,6 +148,35 @@ ALTER TABLE pending_signals
 CREATE INDEX IF NOT EXISTS idx_pending_signals_status
     ON pending_signals (status, created_at);
 
+ALTER TABLE pending_signals
+    ADD COLUMN IF NOT EXISTS strategy VARCHAR(40),
+    ADD COLUMN IF NOT EXISTS strategy_subtype VARCHAR(80),
+    ADD COLUMN IF NOT EXISTS confidence DECIMAL(6, 4),
+    ADD COLUMN IF NOT EXISTS reason TEXT;
+
+CREATE TABLE IF NOT EXISTS strategy_signals (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    idempotency_key TEXT NOT NULL UNIQUE,
+    symbol VARCHAR(20) NOT NULL,
+    mode VARCHAR(20),
+    strategy VARCHAR(40),
+    strategy_subtype VARCHAR(80) NOT NULL,
+    action VARCHAR(10) NOT NULL,
+    confidence DECIMAL(6, 4),
+    rule_score DECIMAL(6, 4),
+    reason TEXT,
+    entry_price DECIMAL(30, 12),
+    atr_value DECIMAL(30, 12),
+    atr_multiplier DECIMAL(10, 4),
+    stop_distance DECIMAL(30, 12),
+    stop_loss DECIMAL(30, 12),
+    take_profit DECIMAL(30, 12),
+    risk_budget_usd DECIMAL(18, 8),
+    status VARCHAR(20) NOT NULL DEFAULT 'candidate',
+    trade_id TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 -- ═══════════════════════════════════════════════════════════════════════
 -- ===== جدول trades (مفقود بالكامل سابقاً — أُضيف هنا) =====
 -- ═══════════════════════════════════════════════════════════════════════
@@ -261,6 +290,11 @@ ALTER TABLE trades ADD COLUMN IF NOT EXISTS exit_mark_price DECIMAL(30, 12);
 ALTER TABLE trades ADD COLUMN IF NOT EXISTS entry_trigger_price DECIMAL(30, 12);
 ALTER TABLE trades ADD COLUMN IF NOT EXISTS exit_trigger_price DECIMAL(30, 12);
 ALTER TABLE trades ADD COLUMN IF NOT EXISTS exit_quantity DECIMAL(18, 8);
+ALTER TABLE trades ADD COLUMN IF NOT EXISTS atr_value DECIMAL(30, 12);
+ALTER TABLE trades ADD COLUMN IF NOT EXISTS atr_multiplier DECIMAL(10, 4);
+ALTER TABLE trades ADD COLUMN IF NOT EXISTS stop_distance DECIMAL(30, 12);
+ALTER TABLE trades ADD COLUMN IF NOT EXISTS risk_budget_usd DECIMAL(18, 8);
+ALTER TABLE trades ADD COLUMN IF NOT EXISTS signal_id UUID;
 
 -- فهارس لتسريع الاستعلامات المتكررة فعلياً في الكود:
 -- state_manager.get_open_trades_from_db() → .eq("status","OPEN")
@@ -269,6 +303,36 @@ CREATE INDEX IF NOT EXISTS idx_trades_status ON trades (status);
 CREATE INDEX IF NOT EXISTS idx_trades_opened_at ON trades (opened_at DESC);
 -- main.py → فلترة الصفقات المفتوحة حسب الرمز في كل دورة
 CREATE INDEX IF NOT EXISTS idx_trades_symbol_status ON trades (symbol, status);
+CREATE INDEX IF NOT EXISTS idx_strategy_signals_attribution
+    ON strategy_signals (strategy, strategy_subtype, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_trades_signal_id
+    ON trades (signal_id) WHERE signal_id IS NOT NULL;
+
+CREATE OR REPLACE VIEW dashboard_strategy_subtype_performance AS
+WITH grouped AS (
+    SELECT
+        COALESCE(NULLIF(strategy_subtype, ''), 'unknown') AS strategy_subtype,
+        COUNT(*)::INTEGER AS closed_trades,
+        COUNT(*) FILTER (WHERE pnl > 0)::INTEGER AS winning_trades,
+        COUNT(*) FILTER (WHERE pnl < 0)::INTEGER AS losing_trades,
+        COALESCE(SUM(pnl), 0)::NUMERIC AS realized_pnl,
+        COALESCE(AVG(pnl) FILTER (WHERE pnl > 0), 0)::NUMERIC AS average_win,
+        COALESCE(AVG(pnl) FILTER (WHERE pnl < 0), 0)::NUMERIC AS average_loss,
+        COALESCE(SUM(pnl) FILTER (WHERE pnl > 0), 0)::NUMERIC AS gross_profit,
+        ABS(COALESCE(SUM(pnl) FILTER (WHERE pnl < 0), 0))::NUMERIC AS gross_loss,
+        COALESCE(AVG(exit_slippage_bps), 0)::NUMERIC AS average_exit_slippage_bps,
+        MAX(closed_at) AS last_closed_at
+    FROM trades
+    WHERE status = 'CLOSED' AND pnl_source = 'exchange_fill' AND pnl IS NOT NULL
+    GROUP BY COALESCE(NULLIF(strategy_subtype, ''), 'unknown')
+)
+SELECT strategy_subtype, closed_trades, winning_trades, losing_trades,
+       CASE WHEN closed_trades > 0 THEN winning_trades::NUMERIC / closed_trades ELSE 0 END AS win_rate,
+       realized_pnl, average_win, average_loss, gross_profit, gross_loss,
+       CASE WHEN gross_loss > 0 THEN gross_profit / gross_loss ELSE NULL END AS profit_factor,
+       CASE WHEN closed_trades > 0 THEN realized_pnl / closed_trades ELSE 0 END AS expectancy,
+       average_exit_slippage_bps, last_closed_at
+FROM grouped;
 
 CREATE TABLE IF NOT EXISTS partial_closes (
     id BIGSERIAL PRIMARY KEY,

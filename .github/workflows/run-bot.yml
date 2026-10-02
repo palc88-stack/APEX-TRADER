@@ -26,6 +26,12 @@ jobs:
       ALLOW_NEW_ENTRIES: "false"
       AUTO_RECONCILE_CLOSE_ENABLED: "true"
       AUTO_RECONCILE_CLOSE_LIVE: "false"
+      MAX_LEVERAGE: "5"
+      MAX_RISK_PER_TRADE_PCT: "1.0"
+      MAX_RISK_PER_TRADE_USD: "10.0"
+      ATR_PERIOD: "14"
+      ATR_STOP_MULTIPLIER: "2.0"
+      SUBTYPE_REPORT_BATCH_SIZE: "10"
       APEX_RUN_CYCLES: "1"
       # The bot acquires this lease before initialization and releases it on exit.
       APEX_LEASE_NAME: apex-trading-execution

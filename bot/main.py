@@ -820,6 +820,34 @@ class ApexTraderBot:
                 if action_val in (TradeDirection.HOLD, "HOLD"):
                     continue
 
+                # Persist attribution before any order attempt. This is a signal
+                # audit record, not evidence of a fill or a trade.
+                strategy = signal_result.get("strategy") or "UNKNOWN"
+                strategy_subtype = signal_result.get("strategy_subtype") or "unknown"
+                atr_value = float(signal_result.get("indicators", {}).get("atr_value") or 0.0)
+                atr_multiplier = float(getattr(risk_cfg := self.config.risk, "atr_stop_multiplier", 2.0))
+                candle_key = str(candles.index[-1]) if len(candles.index) else "unknown"
+                signal_idempotency_key = (
+                    f"signal:{symbol}:{candle_key}:{strategy_subtype}:{str(action_val).upper()}"
+                )
+                signal_id = str(uuid.uuid5(uuid.NAMESPACE_URL, signal_idempotency_key))
+                self.state_manager.record_strategy_signal({
+                    "id": signal_id,
+                    "idempotency_key": signal_idempotency_key,
+                    "symbol": symbol,
+                    "mode": str(self.config.active_mode),
+                    "strategy": strategy,
+                    "strategy_subtype": strategy_subtype,
+                    "action": str(action_val).upper(),
+                    "confidence": signal_result.get("confidence", 0.0),
+                    "rule_score": signal_result.get("rule_score", signal_result.get("confidence", 0.0)),
+                    "reason": signal_result.get("reason", ""),
+                    "entry_price": current_price,
+                    "atr_value": atr_value or None,
+                    "atr_multiplier": atr_multiplier,
+                    "status": "candidate",
+                })
+
                 # ✅ إصلاح: تمرير المراكز المفتوحة لـ RiskManager
                 if not self.risk_manager.check_risk_limits(
                     type("S", (), signal_result)(),
@@ -842,13 +870,21 @@ class ApexTraderBot:
                 tp2_pct = float(signal_result.get("take_profit_pct") or (abs(float(configured_tp2) - reference_price) / reference_price if configured_tp2 else risk_cfg.tp2_pct / 100))
                 leverage = risk_cfg.max_leverage
 
+                # Prefer a volatility-derived stop. Percentage SL remains a
+                # compatibility fallback when ATR is unavailable during warm-up.
+                stop_distance = (
+                    atr_value * atr_multiplier
+                    if atr_value > 0 and atr_multiplier > 0
+                    else entry_price * sl_pct
+                )
+
                 if str(action_val).upper() in ("LONG", "BUY"):
-                    stop_loss = round(entry_price * (1 - sl_pct), 6)
+                    stop_loss = round(entry_price - stop_distance, 6)
                     take_profit_1 = round(entry_price * (1 + tp1_pct), 6)
                     take_profit_2 = round(entry_price * (1 + tp2_pct), 6)
                     side = "buy"
                 else:
-                    stop_loss = round(entry_price * (1 + sl_pct), 6)
+                    stop_loss = round(entry_price + stop_distance, 6)
                     take_profit_1 = round(entry_price * (1 - tp1_pct), 6)
                     take_profit_2 = round(entry_price * (1 - tp2_pct), 6)
                     side = "sell"
@@ -862,6 +898,7 @@ class ApexTraderBot:
                     entry_price=entry_price,
                     stop_loss=stop_loss,
                     leverage=leverage,
+                    account_balance=balance,
                 )
 
                 # ✅ تحقق evaluate_risk قبل التنفيذ
@@ -967,6 +1004,9 @@ class ApexTraderBot:
                         "direction": str(action_val).upper(),
                         "status": "NEEDS_RECONCILIATION",
                         "entry_order_id": entry_order_id,
+                        "signal_id": signal_id,
+                        "strategy": strategy,
+                        "strategy_subtype": strategy_subtype,
                         "entry_client_order_id": order.get("clientOrderId"),
                         "entry_price_source": entry_fill.price_source.value if entry_fill else "unconfirmed",
                         "entry_quantity_source": entry_fill.quantity_source.value if entry_fill else "unconfirmed",
@@ -1025,8 +1065,9 @@ class ApexTraderBot:
                     # استعلام SELECT الخاص بجدول trades ولم يكن يُحفَظ أبداً —
                     # كان سيسبب فراغاً دائماً في هذا العمود بالواجهة.
                     "mode": str(self.config.active_mode),
-                    "strategy": signal_result.get("strategy") or "UNKNOWN",
-                    "strategy_subtype": signal_result.get("strategy_subtype") or "unknown",
+                    "strategy": strategy,
+                    "strategy_subtype": strategy_subtype,
+                    "signal_id": signal_id,
                     "signal_confidence": signal_result.get("confidence", 0.0),
                     "rule_score": signal_result.get("rule_score", signal_result.get("confidence", 0.0)),
                     "signal_reason": signal_result.get("reason", ""),
@@ -1042,6 +1083,13 @@ class ApexTraderBot:
                     "entry_quantity_source": entry_fill.quantity_source.value if entry_fill else "unconfirmed",
                     "entry_fee_source": entry_fill.fee_source.value if entry_fill else "unconfirmed",
                     "stop_loss": stop_loss,
+                    "atr_value": atr_value or None,
+                    "atr_multiplier": atr_multiplier,
+                    "stop_distance": abs(entry_price - stop_loss),
+                    "risk_budget_usd": min(
+                        float(getattr(risk_cfg, "max_risk_per_trade_usd", 0.0) or float("inf")),
+                        self._current_balance * float(risk_cfg.max_risk_per_trade_pct) / 100.0,
+                    ),
                     "take_profit_1": take_profit_1,
                     "take_profit_2": take_profit_2,
                     "size_usd": size_usd,
@@ -1070,6 +1118,27 @@ class ApexTraderBot:
                 }
                 if not self.state_manager.save_trade_state(trade_record):
                     raise RuntimeError("order executed but trade state could not be persisted")
+                self.state_manager.record_strategy_signal({
+                    "id": signal_id,
+                    "idempotency_key": signal_idempotency_key,
+                    "symbol": symbol,
+                    "mode": str(self.config.active_mode),
+                    "strategy": strategy,
+                    "strategy_subtype": strategy_subtype,
+                    "action": str(action_val).upper(),
+                    "confidence": signal_result.get("confidence", 0.0),
+                    "rule_score": signal_result.get("rule_score", signal_result.get("confidence", 0.0)),
+                    "reason": signal_result.get("reason", ""),
+                    "entry_price": entry_price,
+                    "atr_value": atr_value or None,
+                    "atr_multiplier": atr_multiplier,
+                    "stop_distance": abs(entry_price - stop_loss),
+                    "stop_loss": stop_loss,
+                    "take_profit": take_profit_1,
+                    "risk_budget_usd": trade_record["risk_budget_usd"],
+                    "status": "executed",
+                    "trade_id": entry_order_id,
+                })
                 position = self.state_manager.reconstruct_position(trade_record)
                 if position is None:
                     self._reconciliation_blocked_symbols.add(symbol)
@@ -1116,16 +1185,19 @@ class ApexTraderBot:
         entry_price: float | None = None,
         stop_loss: float | None = None,
         leverage: int | None = None,
+        account_balance: float | None = None,
     ) -> float:
         """Return margin sized by stop distance, capped by position percentage."""
         try:
-            initial = float(self._current_balance)
+            initial = float(account_balance if account_balance is not None else self._current_balance)
             if initial <= 0:
                 raise ValueError("balance unavailable")
             max_margin = initial * float(self.config.risk.max_position_pct) / 100.0
             if entry_price and stop_loss and leverage and entry_price > 0 and leverage > 0:
                 stop_distance = abs(float(entry_price) - float(stop_loss)) / float(entry_price)
-                risk_budget = initial * float(self.config.risk.max_risk_per_trade_pct) / 100.0
+                configured_usd = float(getattr(self.config.risk, "max_risk_per_trade_usd", 0.0) or 0.0)
+                percentage_budget = initial * float(self.config.risk.max_risk_per_trade_pct) / 100.0
+                risk_budget = min(configured_usd, percentage_budget) if configured_usd > 0 else percentage_budget
                 if stop_distance > 0:
                     risk_sized_margin = risk_budget / (stop_distance * float(leverage))
                     return round(max(0.0, min(max_margin, risk_sized_margin)), 2)

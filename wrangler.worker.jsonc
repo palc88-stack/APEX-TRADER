@@ -16,7 +16,13 @@
   "vars": {
     "UNIVERSE_SIZE": "20",
     "BINANCE_BASE_URL": "https://testnet.binancefuture.com",
-    "ALLOW_LIVE_CRON": "false"
+    "ALLOW_LIVE_CRON": "false",
+    "SUBTYPE_REPORT_BATCH_SIZE": "10",
+    "ATR_PERIOD": "14",
+    "ATR_STOP_MULTIPLIER": "2.0",
+    "MAX_LEVERAGE": "5",
+    "MAX_RISK_PER_TRADE_PCT": "1.0",
+    "MAX_RISK_PER_TRADE_USD": "10.0"
   },
   "assets": {
     "directory": "web/dist",

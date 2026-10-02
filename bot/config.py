@@ -136,7 +136,14 @@ class RiskConfig:
     # (max_allowed_loss = balance * 4.0 أي 400% من الرصيد!). تم تأكيد هذا
     # عملياً بالتنفيذ الفعلي للكود.
     max_risk_per_trade_pct: float = field(default_factory=lambda: _env_float("MAX_RISK_PER_TRADE_PCT", 2.0))
-    max_leverage: int = field(default_factory=lambda: _env_int("MAX_LEVERAGE", 20))
+    max_leverage: int = field(default_factory=lambda: _env_int("MAX_LEVERAGE", 5))
+    max_risk_per_trade_usd: float = field(
+        default_factory=lambda: _env_float("MAX_RISK_PER_TRADE_USD", 0.0)
+    )
+    atr_period: int = field(default_factory=lambda: max(2, _env_int("ATR_PERIOD", 14)))
+    atr_stop_multiplier: float = field(
+        default_factory=lambda: max(0.1, _env_float("ATR_STOP_MULTIPLIER", 2.0))
+    )
     default_sl_pct: float = field(default_factory=lambda: _env_float("DEFAULT_SL_PCT", 1.5))
     tp1_pct: float = field(default_factory=lambda: _env_float("TP1_PCT", 1.0))
     tp2_pct: float = field(default_factory=lambda: _env_float("TP2_PCT", 2.5))

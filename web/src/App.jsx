@@ -170,6 +170,7 @@ function ServiceRow({ title, value }) {
 function Dashboard() {
   const [status, setStatus] = useState(null);
   const [dailySummary, setDailySummary] = useState(null);
+  const [subtypePerformance, setSubtypePerformance] = useState([]);
   const [trades, setTrades] = useState([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
@@ -182,7 +183,7 @@ function Dashboard() {
       return;
     }
 
-    const [statusResult, tradesResult, dailySummaryResult] = await Promise.all([
+    const [statusResult, tradesResult, dailySummaryResult, subtypeResult] = await Promise.all([
       supabase
         .from("dashboard_risk_state")
         .select("*")
@@ -194,7 +195,8 @@ function Dashboard() {
         .select(
           "id,symbol,direction,mode,strategy,entry_price,exit_price,stop_loss," +
             "take_profit_1,take_profit_2,size_usd,leverage,pnl,pnl_pct," +
-            "status,close_reason,pnl_source,reconciliation_note,opened_at,closed_at,duration_minutes"
+            "status,close_reason,pnl_source,reconciliation_note,strategy_subtype," +
+            "atr_value,atr_multiplier,stop_distance,risk_budget_usd,opened_at,closed_at,duration_minutes"
         )
         .order("opened_at", { ascending: false })
         .limit(200),
@@ -204,6 +206,12 @@ function Dashboard() {
         .select("*")
         .limit(1)
         .maybeSingle(),
+
+      supabase
+        .from("dashboard_strategy_subtype_performance")
+        .select("*")
+        .order("closed_trades", { ascending: false })
+        .limit(20),
     ]);
 
     const errors = [];
@@ -227,6 +235,13 @@ function Dashboard() {
       errors.push(`ملخص اليوم: ${dailySummaryResult.error.message}`);
     } else {
       setDailySummary(dailySummaryResult.data);
+    }
+
+    if (subtypeResult.error) {
+      setSubtypePerformance([]);
+      errors.push(`أداء الاستراتيجيات: ${subtypeResult.error.message}`);
+    } else {
+      setSubtypePerformance(subtypeResult.data || []);
     }
 
     setError(errors.join(" · "));
@@ -253,6 +268,15 @@ function Dashboard() {
           event: "*",
           schema: "public",
           table: "trades",
+        },
+        loadData
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "strategy_signals",
         },
         loadData
       )
@@ -583,6 +607,54 @@ function Dashboard() {
         </article>
       </section>
 
+      <section className="panel archive">
+        <div className="panel-title">
+          <div>
+            <h2>أداء الاستراتيجيات الفرعية</h2>
+            <p className="muted">الصفقات المغلقة المؤكدة بالـexchange fill فقط</p>
+          </div>
+          <span className="count">
+            {subtypePerformance.reduce(
+              (total, row) => total + Number(row.closed_trades || 0),
+              0
+            )}
+          </span>
+        </div>
+        {subtypePerformance.length === 0 ? (
+          <div className="empty">لم تُجمع صفقات مؤكدة كافية بعد.</div>
+        ) : (
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Subtype</th>
+                  <th>الصفقات</th>
+                  <th>Win rate</th>
+                  <th>PnL</th>
+                  <th>Profit factor</th>
+                  <th>Expectancy</th>
+                  <th>آخر إغلاق</th>
+                </tr>
+              </thead>
+              <tbody>
+                {subtypePerformance.map((row) => (
+                  <tr key={row.strategy_subtype}>
+                    <td><b>{row.strategy_subtype}</b></td>
+                    <td>{row.closed_trades}</td>
+                    <td>{(Number(row.win_rate || 0) * 100).toFixed(1)}%</td>
+                    <td className={Number(row.realized_pnl || 0) >= 0 ? "text-positive" : "text-negative"}>
+                      ${formatMoney(row.realized_pnl)}
+                    </td>
+                    <td>{row.profit_factor == null ? "—" : Number(row.profit_factor).toFixed(2)}</td>
+                    <td>${formatMoney(row.expectancy)}</td>
+                    <td>{formatDate(row.last_closed_at)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
       <section className="panel archive">
         <div className="panel-title archive-head">
           <div>
