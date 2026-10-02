@@ -44,7 +44,7 @@ jobs:
       APEX_LEASE_OWNER: github:testnet:${{ github.run_id }}
       APEX_LEASE_TTL_SECONDS: "300"
       # The persisted dynamic universe is the source of truth for symbols.
-      UNIVERSE_SIZE: "20"
+      UNIVERSE_SIZE: "3"
       UNIVERSE_REFRESH_HOURS: "4"
       AUTO_SYMBOL_SCAN: "false"
       # Cover manual runs where an optional input may arrive as an empty string.

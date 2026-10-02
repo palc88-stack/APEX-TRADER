@@ -134,7 +134,7 @@ def test_workflow_has_no_schedule_or_live_secret():
 def test_testnet_session_uses_dynamic_universe():
     workflow = (ROOT / ".github/workflows/testnet-session.yml").read_text()
     assert "TRADING_SYMBOLS: BTC/USDT,ETH/USDT,SOL/USDT" in workflow
-    assert 'UNIVERSE_SIZE: "20"' in workflow
+    assert 'UNIVERSE_SIZE: "3"' in workflow
     assert 'UNIVERSE_REFRESH_HOURS: "4"' in workflow
     assert 'AUTO_SYMBOL_SCAN: "false"' in workflow
 

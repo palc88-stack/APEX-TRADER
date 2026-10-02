@@ -1,4 +1,18 @@
+from pathlib import Path
+
 from scripts.verify_testnet_consistency import compare_positions, validate_pnl, validate_slots
+
+
+def test_consistency_trade_query_uses_existing_columns_only():
+    source = (Path(__file__).parents[1] / "scripts/verify_testnet_consistency.py").read_text()
+    assert "pnl_source,updated_at" not in source
+    assert "id,symbol,status,entry_quantity,remaining_quantity,pnl,pnl_source" in source
+
+
+def test_orphan_reconciliation_does_not_reuse_closed_trade_id():
+    source = (Path(__file__).parents[1] / "bot/main.py").read_text()
+    assert "active_trade_ids=active_trade_ids" in source
+    assert "slot_trade_id in active_trade_ids" in source
 
 
 def test_matching_position_has_no_findings():

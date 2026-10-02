@@ -200,11 +200,21 @@ class ApexTraderBot:
                 for slot in self.state_manager.get_occupied_position_slots()
                 if slot.get("symbol")
             }
+            active_trade_ids = {
+                str(trade.get("id"))
+                for trade in local
+                if trade.get("status") in {"OPEN", "NEEDS_RECONCILIATION"}
+                and trade.get("id")
+            }
             for position in result.data:
                 symbol = str(position.get("symbol") or "")
                 if symbol not in orphans:
                     continue
-                if not self._persist_orphan_position(position, occupied_slots.get(symbol)):
+                if not self._persist_orphan_position(
+                    position,
+                    occupied_slots.get(symbol),
+                    active_trade_ids=active_trade_ids,
+                ):
                     unresolved.add(symbol)
             self._reconciliation_blocked_symbols.update(orphans)
             if unresolved:
@@ -295,6 +305,41 @@ class ApexTraderBot:
                 if fill.price <= 0 or fill.quantity <= 0:
                     logger.warning("⏳ Reconciliation close fill not confirmed yet: {} {}", symbol, order_id)
                     continue
+                # A previously submitted reduce-only order may fill only part
+                # of the position. Re-read exposure before closing the local
+                # record; otherwise a half-close can be falsely reported as
+                # a fully reconciled trade.
+                latest_positions = await self.exchange.get_all_open_positions_result()
+                if not latest_positions.ok:
+                    logger.error("❌ Cannot confirm residual exposure after fill: {}", symbol)
+                    continue
+                residual = next(
+                    (
+                        position for position in latest_positions.data
+                        if str(position.get("symbol") or "") == symbol
+                        and abs(float(position.get("contracts") or position.get("positionAmt") or 0)) > 0
+                    ),
+                    None,
+                )
+                if residual is not None:
+                    residual_quantity = abs(float(
+                        residual.get("contracts") or residual.get("positionAmt") or 0
+                    ))
+                    self.state_manager.save_trade_state({
+                        **trade,
+                        "remaining_quantity": residual_quantity,
+                        "closing_order_id": None,
+                        "reconciliation_note": (
+                            "reduce-only close partially filled; residual exposure remains; "
+                            "a new idempotent close is allowed"
+                        ),
+                    })
+                    logger.warning(
+                        "⏳ Partial reconciliation fill for {}: residual quantity {}",
+                        symbol,
+                        residual_quantity,
+                    )
+                    continue
                 if not self.state_manager.mark_reconciliation_closed(
                     trade,
                     order_id=order_id,
@@ -339,7 +384,11 @@ class ApexTraderBot:
             self.state_manager.mark_reconciliation_alerted(alert_key)
 
     def _persist_orphan_position(
-        self, position: dict[str, Any], slot: dict[str, Any] | None
+        self,
+        position: dict[str, Any],
+        slot: dict[str, Any] | None,
+        *,
+        active_trade_ids: set[str] | None = None,
     ) -> bool:
         """Persist enough exchange facts to block an orphan safely without fake PnL."""
         symbol = str(position.get("symbol") or "")
@@ -357,7 +406,12 @@ class ApexTraderBot:
             logger.error("❌ Cannot persist orphan {} without entry price and quantity", symbol)
             return False
         direction = "SHORT" if str(position.get("side") or "").lower() in {"short", "sell"} else "LONG"
-        trade_id = str((slot or {}).get("trade_id") or f"orphan-{symbol}-{int(time.time())}")
+        slot_trade_id = str((slot or {}).get("trade_id") or "")
+        trade_id = (
+            slot_trade_id
+            if slot_trade_id and (active_trade_ids is None or slot_trade_id in active_trade_ids)
+            else f"orphan-{symbol}-{int(time.time() * 1000)}"
+        )
         record = {
             "id": trade_id,
             "symbol": symbol,
@@ -556,6 +610,18 @@ class ApexTraderBot:
                                 "exchange_order_id": partial_order_id,
                             }):
                                 raise RuntimeError("partial close executed but persistence failed")
+                            # Keep the parent trade quantity aligned with the
+                            # confirmed exchange fill; never infer it from a
+                            # candle or requested amount.
+                            self.state_manager.save_trade_state({
+                                **pos,
+                                "remaining_quantity": max(
+                                    0.0,
+                                    float(pos.get("remaining_quantity") or pos_obj.entry_quantity)
+                                    - float(partial_fill.quantity),
+                                ),
+                                "tp1_executed": True,
+                            })
                         except Exception as partial_err:
                             logger.error(f"❌ فشل تنفيذ الإغلاق الجزئي (TP1) لـ {symbol}: {partial_err}")
                         else:

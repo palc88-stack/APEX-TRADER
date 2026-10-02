@@ -214,7 +214,7 @@ CREATE TABLE IF NOT EXISTS trades (
     confidence DECIMAL(5, 4) DEFAULT 0,
 
     status VARCHAR(20) DEFAULT 'OPEN',          -- OPEN | CLOSED | NEEDS_RECONCILIATION
-    close_reason VARCHAR(30),                   -- tp1 | tp2 | stop_loss | trailing_stop | manual
+    close_reason VARCHAR(64),                   -- tp1 | tp2 | stop_loss | trailing_stop | manual | reconciliation
 
     pnl DECIMAL(18, 4) DEFAULT 0,
     pnl_pct DECIMAL(10, 4) DEFAULT 0,

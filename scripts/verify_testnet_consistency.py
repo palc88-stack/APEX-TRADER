@@ -134,7 +134,7 @@ def build_supabase() -> Client:
 
 def read_supabase(client: Client) -> dict[str, Any]:
     trades = client.table("trades").select(
-        "id,symbol,status,entry_quantity,remaining_quantity,pnl,pnl_source,updated_at"
+        "id,symbol,status,entry_quantity,remaining_quantity,pnl,pnl_source"
     ).in_("status", ["OPEN", "NEEDS_RECONCILIATION"]).limit(100).execute().data or []
     slots = client.table("position_slots").select(
         "slot_no,symbol,trade_id,reservation_id,status"

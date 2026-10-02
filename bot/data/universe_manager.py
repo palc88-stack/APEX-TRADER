@@ -36,7 +36,7 @@ class UniverseManager:
         self.state_manager = state_manager
         self.config = config
         trading = getattr(config, "trading", config)
-        self.universe_size = max(1, int(getattr(trading, "universe_size", 20)))
+        self.universe_size = max(1, int(getattr(trading, "universe_size", 3)))
         self.refresh_hours = max(1, int(getattr(trading, "universe_refresh_hours", 4)))
         self.quote = str(getattr(trading, "universe_quote", "USDT")).upper()
         self.fallback_symbols = list(getattr(trading, "symbols", ["BTC/USDT"]))
