@@ -362,6 +362,16 @@ REVOKE ALL ON TABLE partial_closes FROM anon, authenticated;
 GRANT SELECT ON TABLE partial_closes TO authenticated;
 
 -- ===== Idempotency, bounded state transitions, and RLS =====
+ALTER TABLE strategy_signals ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON TABLE strategy_signals FROM anon, authenticated;
+GRANT SELECT ON TABLE strategy_signals TO authenticated;
+DROP POLICY IF EXISTS strategy_signals_authenticated_read ON strategy_signals;
+CREATE POLICY strategy_signals_authenticated_read ON strategy_signals
+    FOR SELECT TO authenticated USING (true);
+DROP POLICY IF EXISTS strategy_signals_service_role_all ON strategy_signals;
+CREATE POLICY strategy_signals_service_role_all ON strategy_signals
+    FOR ALL TO service_role USING (true) WITH CHECK (true);
+
 ALTER TABLE pending_signals ENABLE ROW LEVEL SECURITY;
 ALTER TABLE trades ENABLE ROW LEVEL SECURITY;
 ALTER TABLE bot_state ENABLE ROW LEVEL SECURITY;
