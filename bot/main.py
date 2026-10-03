@@ -183,6 +183,10 @@ class ApexTraderBot:
             str(position.get("symbol")) for position in result.data
             if position.get("symbol")
         }
+        self._release_stale_position_slots(
+            local_trades=local,
+            exchange_symbols=exchange_symbols,
+        )
         for symbol, trade in local_open.items():
             if symbol not in exchange_symbols:
                 self.state_manager.mark_trade_needs_reconciliation(
@@ -229,6 +233,58 @@ class ApexTraderBot:
 
         await self._auto_close_reconciliation_positions()
         await self._notify_reconciliation_required()
+
+    def _release_stale_position_slots(
+        self,
+        *,
+        local_trades: list[dict[str, Any]],
+        exchange_symbols: set[str],
+    ) -> None:
+        """Release only provably stale slot metadata before trading.
+
+        A previous run can terminate after a trade is closed/persisted but before
+        its global position slot is released.  Such a slot must not block every
+        later Testnet run.  This cleanup is deliberately fail-closed: a slot is
+        released only when its symbol has neither an OPEN/NEEDS_RECONCILIATION
+        local trade nor an exchange position.  Any slot associated with a live
+        exchange symbol remains occupied for the normal reconciliation path.
+        """
+        active_trades = [
+            trade
+            for trade in local_trades
+            if trade.get("status") in {"OPEN", "NEEDS_RECONCILIATION"}
+        ]
+        active_symbols = {
+            str(trade.get("symbol"))
+            for trade in active_trades
+            if trade.get("symbol")
+        }
+        active_trade_ids = {
+            str(identifier)
+            for trade in active_trades
+            for identifier in (trade.get("id"), trade.get("entry_order_id"), trade.get("trade_id"))
+            if identifier is not None
+        }
+
+        for slot in self.state_manager.get_occupied_position_slots():
+            symbol = str(slot.get("symbol") or "")
+            trade_id = slot.get("trade_id")
+            if not symbol or symbol in exchange_symbols or symbol in active_symbols:
+                continue
+            if trade_id is not None and str(trade_id) in active_trade_ids:
+                continue
+            released = self.state_manager.release_position_slot(
+                symbol=symbol,
+                trade_id=str(trade_id) if trade_id is not None else None,
+                reservation_id=slot.get("reservation_id"),
+            )
+            if released:
+                logger.warning(
+                    "🧹 Released stale position slot {} for {} (trade_id={})",
+                    slot.get("slot_no"),
+                    symbol,
+                    trade_id,
+                )
 
     async def _auto_close_reconciliation_positions(self) -> None:
         """Resolve reconciliation records without repeating close orders.
