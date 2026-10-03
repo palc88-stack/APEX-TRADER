@@ -362,6 +362,36 @@ REVOKE ALL ON TABLE partial_closes FROM anon, authenticated;
 GRANT SELECT ON TABLE partial_closes TO authenticated;
 
 -- ===== Idempotency, bounded state transitions, and RLS =====
+DO $$
+DECLARE table_name text;
+BEGIN
+  FOREACH table_name IN ARRAY ARRAY[
+    'execution_leases', 'pending_signals', 'position_slots',
+    'reconciliation_runs', 'system_logs'
+  ] LOOP
+    EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', table_name);
+    EXECUTE format('REVOKE ALL ON TABLE public.%I FROM anon, authenticated', table_name);
+    EXECUTE format('GRANT ALL ON TABLE public.%I TO service_role', table_name);
+  END LOOP;
+END
+$$;
+
+DROP POLICY IF EXISTS execution_leases_service_role_all ON execution_leases;
+CREATE POLICY execution_leases_service_role_all ON execution_leases
+    FOR ALL TO service_role USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS pending_signals_service_role_all ON pending_signals;
+CREATE POLICY pending_signals_service_role_all ON pending_signals
+    FOR ALL TO service_role USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS position_slots_service_role_all ON position_slots;
+CREATE POLICY position_slots_service_role_all ON position_slots
+    FOR ALL TO service_role USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS reconciliation_runs_service_role_all ON reconciliation_runs;
+CREATE POLICY reconciliation_runs_service_role_all ON reconciliation_runs
+    FOR ALL TO service_role USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS system_logs_service_role_all ON system_logs;
+CREATE POLICY system_logs_service_role_all ON system_logs
+    FOR ALL TO service_role USING (true) WITH CHECK (true);
+
 ALTER TABLE strategy_signals ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON TABLE strategy_signals FROM anon, authenticated;
 GRANT SELECT ON TABLE strategy_signals TO authenticated;
@@ -375,6 +405,9 @@ CREATE POLICY strategy_signals_service_role_all ON strategy_signals
 ALTER TABLE pending_signals ENABLE ROW LEVEL SECURITY;
 ALTER TABLE trades ENABLE ROW LEVEL SECURITY;
 ALTER TABLE bot_state ENABLE ROW LEVEL SECURITY;
+
+ALTER FUNCTION public.update_updated_at() SET search_path = public, pg_catalog;
+ALTER FUNCTION public.handle_new_user() SET search_path = public, pg_catalog;
 
 ALTER TABLE pending_signals
     ADD COLUMN IF NOT EXISTS processing_owner TEXT,
