@@ -60,6 +60,10 @@ jobs:
       TRADING_TIMEFRAME: 5m
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
       SUPABASE_WRITE_KEY: ${{ secrets.SUPABASE_WRITE_KEY }}
+      SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+      SUPABASE_TEST_EMAIL: ${{ secrets.SUPABASE_TEST_EMAIL }}
+      SUPABASE_TEST_PASSWORD: ${{ secrets.SUPABASE_TEST_PASSWORD }}
+      RUN_SUPABASE_INTEGRATION: "1"
       BINANCE_API_KEY: ${{ secrets.BINANCE_API_KEY }}
       BINANCE_SECRET_KEY: ${{ secrets.BINANCE_SECRET_KEY }}
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -98,6 +102,8 @@ jobs:
           python -m compileall -q bot tests
           python -m pytest -q tests/test_exchange_config.py tests/test_full_system.py tests/test_safety_gates.py --timeout=30
 
+      - name: Verify Supabase strategy_signals RLS integration
+        run: python -m pytest -q tests/test_supabase_rls_integration.py --timeout=30
       - name: Run bounded Binance Testnet polling session
         run: python -m bot.main
 
