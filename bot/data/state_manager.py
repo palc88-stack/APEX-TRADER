@@ -300,6 +300,36 @@ class StateManager:
             logger.error("❌ record_strategy_signal: {}", e)
             return False
 
+    def record_learning_event(self, event_data: Dict[str, Any]) -> bool:
+        """Append an analytics event; never controls execution or accounting."""
+        if not self.client:
+            logger.warning("⚠️ strategy learning event not persisted: Supabase unavailable")
+            return False
+        try:
+            normalized = {
+                "event_type": event_data.get("event_type"),
+                "trade_id": event_data.get("trade_id"),
+                "symbol": event_data.get("symbol"),
+                "strategy": event_data.get("strategy"),
+                "strategy_subtype": event_data.get("strategy_subtype"),
+                "outcome": event_data.get("outcome"),
+                "realized_pnl": event_data.get("realized_pnl"),
+                "fee_amount": event_data.get("fee_amount"),
+                "slippage_bps": event_data.get("slippage_bps"),
+                "error_code": event_data.get("error_code"),
+                "error_message": event_data.get("error_message"),
+                "error_tags": event_data.get("error_tags") or [],
+                "features": event_data.get("features") or {},
+                "model_version": event_data.get("model_version") or "rules-v1",
+            }
+            self.client.table("strategy_learning_events").insert(normalized).execute()
+            return True
+        except Exception as e:
+            # Learning is observational. A schema/permission issue must never
+            # fail a trade cycle or change the provenance ledger.
+            logger.error("❌ record_learning_event: {}", e)
+            return False
+
     def save_trade_state(self, trade_data: Dict[str, Any]) -> bool:
         """حفظ أو تحديث صفقة في Supabase."""
         if not self.client:

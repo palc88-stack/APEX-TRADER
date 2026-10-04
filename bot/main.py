@@ -853,6 +853,29 @@ class ApexTraderBot:
                                 "realized_pnl": realized_pnl,
                             },
                         )
+                        self.state_manager.record_learning_event({
+                            "event_type": "trade_outcome",
+                            "trade_id": str(pos_obj.id),
+                            "symbol": symbol,
+                            "strategy": pos.get("strategy"),
+                            "strategy_subtype": pos.get("strategy_subtype"),
+                            "outcome": (
+                                "win" if realized_pnl > 0
+                                else "loss" if realized_pnl < 0
+                                else "flat"
+                            ),
+                            "realized_pnl": realized_pnl,
+                            "fee_amount": fill.fee,
+                            "slippage_bps": fill.slippage_bps,
+                            "features": {
+                                "close_reason": action.get("reason", ""),
+                                "pnl_source": "exchange_fill",
+                                "entry_price_source": pos.get("entry_price_source"),
+                                "exit_price_source": fill.price_source.value,
+                                "exit_quantity_source": fill.quantity_source.value,
+                                "exit_fee_source": fill.fee_source.value,
+                            },
+                        })
                         self.state_manager.release_position_slot(
                             trade_id=str(pos.get("entry_order_id") or pos_obj.id)
                         )
@@ -1242,6 +1265,23 @@ class ApexTraderBot:
                     )
                     continue
                 logger.opt(exception=True).error("❌ خطأ في {}: {}", symbol, message)
+                self.state_manager.record_learning_event({
+                    "event_type": "execution_error",
+                    "symbol": symbol,
+                    "strategy": locals().get("strategy"),
+                    "strategy_subtype": locals().get("strategy_subtype"),
+                    "error_code": type(e).__name__,
+                    "error_message": message[:2000],
+                    "error_tags": [
+                        tag for tag, matched in (
+                            ("exchange_rejection", "binance" in message.lower()),
+                            ("risk_gate", "risk" in message.lower()),
+                            ("reconciliation", "reconcil" in message.lower()),
+                            ("data_quality", "candle" in message.lower()),
+                        ) if matched
+                    ],
+                    "features": {"execution_enabled": self.config.trading_execution_enabled},
+                })
                 cycle_errors.append(f"{symbol}: {type(e).__name__}: {message}")
                 await self.telegram.send_error(f"Cycle Error [{symbol}]: {message}")
 
