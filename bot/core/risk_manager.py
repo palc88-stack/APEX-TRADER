@@ -14,7 +14,7 @@ class RiskManager:
                 self.config.get("max_risk_pct", 0.02)
             )
             self.max_leverage_allowed = int(
-                self.config.get("max_leverage", 20)
+                self.config.get("max_leverage", 5)
             )
         else:
             # Config object — يقرأ من الـ nested RiskConfig
@@ -31,7 +31,7 @@ class RiskManager:
                     getattr(risk_cfg, "max_risk_per_trade_pct", 2.0)
                 ) / 100.0
                 self.max_leverage_allowed = int(
-                    getattr(risk_cfg, "max_leverage", 20)
+                    getattr(risk_cfg, "max_leverage", 5)
                 )
             else:
                 # يَسقط إلى config.get() إذا كان Config يملكها
@@ -42,7 +42,7 @@ class RiskManager:
                 )
                 self.max_leverage_allowed = int(
                     getattr(self.config, "get", lambda k, d: d)(
-                        "max_leverage", 20
+                        "max_leverage", 5
                     )
                 )
 
@@ -115,10 +115,20 @@ class RiskManager:
         direction: str
     ) -> bool:
         """فحص تفصيلي لمعاملات الصفقة قبل تنفيذها."""
-        if account_balance <= 0 or size_usd <= 0 or entry_price <= 0 or stop_loss <= 0:
+        if (
+            account_balance <= 0
+            or size_usd <= 0
+            or leverage <= 0
+            or entry_price <= 0
+            or stop_loss <= 0
+        ):
             logger.warning("⚠️ بيانات غير صالحة لتقييم المخاطر.")
             return False
         try:
+            values = (account_balance, size_usd, leverage, entry_price, stop_loss)
+            if not all(float(value) == float(value) for value in values):
+                logger.warning("⚠️ بيانات غير محدودة لتقييم المخاطر.")
+                return False
             if leverage > self.max_leverage_allowed:
                 logger.warning(
                     "⚠️ الرافعة ({}) تتجاوز الحد ({}).",
@@ -131,6 +141,9 @@ class RiskManager:
                 return False
 
             sl_distance_pct = abs(entry_price - stop_loss) / entry_price
+            if sl_distance_pct <= 0:
+                logger.warning("⚠️ لا يمكن تقييم صفقة بدون مسافة وقف خسارة.")
+                return False
             notional_usd = size_usd * leverage
             potential_loss = notional_usd * sl_distance_pct
             max_allowed_loss = account_balance * self.max_risk_per_trade_pct

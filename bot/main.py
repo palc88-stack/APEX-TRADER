@@ -1301,17 +1301,28 @@ class ApexTraderBot:
             if initial <= 0:
                 raise ValueError("balance unavailable")
             max_margin = initial * float(self.config.risk.max_position_pct) / 100.0
-            if entry_price and stop_loss and leverage and entry_price > 0 and leverage > 0:
-                stop_distance = abs(float(entry_price) - float(stop_loss)) / float(entry_price)
-                configured_usd = float(getattr(self.config.risk, "max_risk_per_trade_usd", 0.0) or 0.0)
-                percentage_budget = initial * float(self.config.risk.max_risk_per_trade_pct) / 100.0
-                risk_budget = min(configured_usd, percentage_budget) if configured_usd > 0 else percentage_budget
-                if stop_distance > 0:
-                    risk_sized_margin = risk_budget / (stop_distance * float(leverage))
-                    return round(max(0.0, min(max_margin, risk_sized_margin)), 2)
-            return round(max_margin, 2)
-        except Exception:
-            return 10.0
+            if not (
+                entry_price
+                and stop_loss
+                and leverage
+                and float(entry_price) > 0
+                and float(stop_loss) > 0
+                and float(leverage) > 0
+            ):
+                raise ValueError("entry, stop-loss, and leverage are required")
+            stop_distance = abs(float(entry_price) - float(stop_loss)) / float(entry_price)
+            configured_usd = float(getattr(self.config.risk, "max_risk_per_trade_usd", 0.0) or 0.0)
+            percentage_budget = initial * float(self.config.risk.max_risk_per_trade_pct) / 100.0
+            risk_budget = min(configured_usd, percentage_budget) if configured_usd > 0 else percentage_budget
+            if stop_distance <= 0:
+                raise ValueError("stop-loss distance must be positive")
+            risk_sized_margin = risk_budget / (stop_distance * float(leverage))
+            return round(max(0.0, min(max_margin, risk_sized_margin)), 2)
+        except Exception as error:
+            # Fail closed: a sizing/configuration failure must never fall back
+            # to a live order amount, as happened in the historical US trade.
+            logger.error("Position sizing failed; refusing entry: %s", error)
+            return 0.0
 
     async def run_forever(self, interval_seconds: int = 60) -> None:
         """Run direct exchange polling and the real heartbeat loop."""

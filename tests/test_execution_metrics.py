@@ -81,6 +81,52 @@ def test_risk_manager_sizes_are_bounded_by_stop_distance():
     )
 
 
+def test_risk_manager_rejects_legacy_leverage_above_configured_limit():
+    config = SimpleNamespace(
+        risk=SimpleNamespace(
+            max_risk_per_trade_pct=2.0,
+            max_leverage=5,
+            min_confidence=0.65,
+        )
+    )
+    manager = RiskManager(config)
+    assert not manager.evaluate_risk(
+        account_balance=1000,
+        size_usd=10,
+        leverage=20,
+        entry_price=100,
+        stop_loss=99,
+        direction="buy",
+    )
+
+
+def test_risk_manager_rejects_zero_stop_distance_and_invalid_leverage():
+    config = SimpleNamespace(
+        risk=SimpleNamespace(
+            max_risk_per_trade_pct=2.0,
+            max_leverage=5,
+            min_confidence=0.65,
+        )
+    )
+    manager = RiskManager(config)
+    assert not manager.evaluate_risk(
+        account_balance=1000,
+        size_usd=10,
+        leverage=5,
+        entry_price=100,
+        stop_loss=100,
+        direction="buy",
+    )
+    assert not manager.evaluate_risk(
+        account_balance=1000,
+        size_usd=10,
+        leverage=0,
+        entry_price=100,
+        stop_loss=99,
+        direction="buy",
+    )
+
+
 def test_atr_is_available_after_warmup():
     frame = pd.DataFrame({
         "open": [100.0 + i for i in range(20)],
@@ -109,3 +155,15 @@ def test_atr_position_size_uses_dollar_risk_and_leverage():
         account_balance=1000.0,
     )
     assert margin == 66.67
+
+
+def test_position_sizing_fails_closed_when_inputs_are_invalid():
+    bot = object.__new__(__import__("bot.main", fromlist=["ApexTraderBot"]).ApexTraderBot)
+    bot._current_balance = 1000.0
+    bot.config = Config()
+    assert bot._calculate_position_size(
+        entry_price=0.0,
+        stop_loss=0.0,
+        leverage=5,
+        account_balance=1000.0,
+    ) == 0.0
