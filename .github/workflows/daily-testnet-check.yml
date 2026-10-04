@@ -83,10 +83,16 @@ jobs:
           python scripts/verify_testnet_consistency.py \
             --output "artifacts/daily-consistency-${GITHUB_RUN_ID}.json"
 
-      - name: Upload daily consistency report
+      - name: Generate strategy learning report (read-only)
+        run: |
+          python scripts/generate_strategy_learning_report.py \
+            --days 30 \
+            --output "artifacts/strategy-learning-${GITHUB_RUN_ID}.json"
+
+      - name: Upload daily reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: daily-testnet-consistency-${{ github.run_id }}
-          path: artifacts/daily-consistency-${{ github.run_id }}.json
+          name: daily-testnet-reports-${{ github.run_id }}
+          path: artifacts/*.json
           if-no-files-found: warn
