@@ -866,6 +866,18 @@ class ApexTraderBot:
                     )
                     continue
 
+                # Reconciliation-only runners keep execution enabled so they
+                # can close/reduce existing positions, but must never turn a
+                # candidate signal into a new entry.  Do this check before
+                # risk sizing, slot reservation, and place_order: the exchange
+                # gate is a final safety net, not normal control flow.
+                if not self.config.allow_new_entries:
+                    logger.info(
+                        "Skipping new entry for {}: ALLOW_NEW_ENTRIES is false",
+                        symbol,
+                    )
+                    continue
+
                 # 3. توليد إشارة جديدة
                 # SignalEngine removes the live candle and evaluates only the
                 # last closed candle. Keep the live ticker for execution only.
@@ -1229,7 +1241,7 @@ class ApexTraderBot:
                         message,
                     )
                     continue
-                logger.error("❌ خطأ في {}: {}", symbol, message, exc_info=True)
+                logger.opt(exception=True).error("❌ خطأ في {}: {}", symbol, message)
                 cycle_errors.append(f"{symbol}: {type(e).__name__}: {message}")
                 await self.telegram.send_error(f"Cycle Error [{symbol}]: {message}")
 
