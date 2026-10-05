@@ -221,6 +221,9 @@ class Config:
     universe_refresh_only: bool = field(
         default_factory=lambda: _env_bool("UNIVERSE_REFRESH_ONLY", False)
     )
+    shadow_mode: bool = field(
+        default_factory=lambda: _env_bool("SHADOW_MODE", False)
+    )
 
     # ── Methods for backward compatibility with config.get(key) pattern ──
     def get(self, key: str, default: str = "") -> str:

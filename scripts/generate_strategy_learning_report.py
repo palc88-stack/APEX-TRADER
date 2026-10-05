@@ -94,6 +94,14 @@ def _group_by(rows: list[dict[str, Any]], field: str) -> dict[str, Any]:
 def build_report(rows: list[dict[str, Any]], start: datetime, end: datetime) -> dict[str, Any]:
     outcomes = [row for row in rows if row.get("event_type") == "trade_outcome"]
     errors = [row for row in rows if row.get("event_type") == "execution_error"]
+    shadows = [row for row in rows if row.get("event_type") == "shadow_signal"]
+    shadow_actions = Counter()
+    shadow_candidates = Counter()
+    for row in shadows:
+        features = row.get("features") or {}
+        if isinstance(features, dict):
+            shadow_actions[str(features.get("shadow_action") or "UNKNOWN")] += 1
+            shadow_candidates[str(features.get("candidate_action") or "UNKNOWN")] += 1
     tag_counts: Counter[str] = Counter()
     code_counts: Counter[str] = Counter()
     for row in errors:
@@ -128,6 +136,12 @@ def build_report(rows: list[dict[str, Any]], start: datetime, end: datetime) -> 
             "count": len(errors),
             "by_code": dict(code_counts),
             "by_tag": dict(tag_counts),
+        },
+        "shadow_mode": {
+            "signals": len(shadows),
+            "candidate_actions": dict(shadow_candidates),
+            "shadow_actions": dict(shadow_actions),
+            "execution_impact": "none; observational only",
         },
         "warnings": warnings,
         "model_versions": dict(Counter(str(row.get("model_version") or "UNKNOWN") for row in rows)),

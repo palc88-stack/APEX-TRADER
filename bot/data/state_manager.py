@@ -307,6 +307,7 @@ class StateManager:
             return False
         try:
             normalized = {
+                "idempotency_key": event_data.get("idempotency_key"),
                 "event_type": event_data.get("event_type"),
                 "trade_id": event_data.get("trade_id"),
                 "symbol": event_data.get("symbol"),
@@ -322,7 +323,12 @@ class StateManager:
                 "features": event_data.get("features") or {},
                 "model_version": event_data.get("model_version") or "rules-v1",
             }
-            self.client.table("strategy_learning_events").insert(normalized).execute()
+            if normalized["idempotency_key"]:
+                self.client.table("strategy_learning_events").upsert(
+                    normalized, on_conflict="idempotency_key"
+                ).execute()
+            else:
+                self.client.table("strategy_learning_events").insert(normalized).execute()
             return True
         except Exception as e:
             # Learning is observational. A schema/permission issue must never

@@ -25,6 +25,7 @@ from bot.core.position_manager import PositionManager
 from bot.data.state_manager import StateManager
 from bot.data.universe_manager import UniverseManager
 from bot.notifications.telegram_notifier import TelegramNotifier
+from bot.learning.shadow import recommend_shadow_action
 
 logger = logging.getLogger("ApexTrader.Main")
 
@@ -889,6 +890,46 @@ class ApexTraderBot:
                     )
                     continue
 
+                # Evaluate the closed-candle signal once. Shadow Mode is
+                # observational and runs before the entry gate so read-only
+                # reconciliation runners can still collect signal evidence.
+                signal_result = self.signal_engine.evaluate_market(candles, symbol)
+                from bot.signals.signal_engine import TradeDirection
+                action_val = signal_result.get("action")
+                if action_val in (TradeDirection.HOLD, "HOLD"):
+                    continue
+                strategy = signal_result.get("strategy") or "UNKNOWN"
+                strategy_subtype = signal_result.get("strategy_subtype") or "unknown"
+                if self.config.shadow_mode:
+                    shadow = recommend_shadow_action(
+                        signal_result,
+                        min_confidence=float(self.config.risk.min_confidence),
+                    )
+                    candle_key = str(candles.index[-1]) if len(candles.index) else "unknown"
+                    self.state_manager.record_learning_event({
+                        "idempotency_key": (
+                            f"shadow:{symbol}:{candle_key}:{strategy_subtype}:"
+                            f"{shadow['candidate_action']}"
+                        ),
+                        "event_type": "shadow_signal",
+                        "symbol": symbol,
+                        "strategy": strategy,
+                        "strategy_subtype": strategy_subtype,
+                        "outcome": shadow["shadow_action"],
+                        "model_version": shadow["model_version"],
+                        "features": {
+                            "candle_key": candle_key,
+                            "candidate_action": shadow["candidate_action"],
+                            "candidate_confidence": shadow["candidate_confidence"],
+                            "shadow_action": shadow["shadow_action"],
+                            "shadow_confidence": shadow["shadow_confidence"],
+                            "decision": shadow["decision"],
+                            "reason": shadow["reason"],
+                            "execution_enabled": self.config.trading_execution_enabled,
+                            "allow_new_entries": self.config.allow_new_entries,
+                        },
+                    })
+
                 # Reconciliation-only runners keep execution enabled so they
                 # can close/reduce existing positions, but must never turn a
                 # candidate signal into a new entry.  Do this check before
@@ -901,20 +942,8 @@ class ApexTraderBot:
                     )
                     continue
 
-                # 3. توليد إشارة جديدة
-                # SignalEngine removes the live candle and evaluates only the
-                # last closed candle. Keep the live ticker for execution only.
-                signal_result = self.signal_engine.evaluate_market(candles, symbol)
-
-                from bot.signals.signal_engine import TradeDirection
-                action_val = signal_result.get("action")
-                if action_val in (TradeDirection.HOLD, "HOLD"):
-                    continue
-
                 # Persist attribution before any order attempt. This is a signal
                 # audit record, not evidence of a fill or a trade.
-                strategy = signal_result.get("strategy") or "UNKNOWN"
-                strategy_subtype = signal_result.get("strategy_subtype") or "unknown"
                 atr_value = float(signal_result.get("indicators", {}).get("atr_value") or 0.0)
                 atr_multiplier = float(getattr(risk_cfg := self.config.risk, "atr_stop_multiplier", 2.0))
                 candle_key = str(candles.index[-1]) if len(candles.index) else "unknown"

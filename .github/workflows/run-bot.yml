@@ -24,6 +24,7 @@ jobs:
       # Allow reduce-only reconciliation closes, but never new entries.
       TRADING_EXECUTION_ENABLED: "true"
       ALLOW_NEW_ENTRIES: "false"
+      SHADOW_MODE: "true"
       AUTO_RECONCILE_CLOSE_ENABLED: "true"
       AUTO_RECONCILE_CLOSE_LIVE: "false"
       MAX_LEVERAGE: "5"

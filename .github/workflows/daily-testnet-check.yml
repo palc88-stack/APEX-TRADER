@@ -89,6 +89,13 @@ jobs:
             --days 30 \
             --output "artifacts/strategy-learning-${GITHUB_RUN_ID}.json"
 
+      - name: Evaluate learning readiness (no activation)
+        run: |
+          python scripts/evaluate_learning_readiness.py \
+            --report "artifacts/strategy-learning-${GITHUB_RUN_ID}.json" \
+            --min-outcomes 50 \
+            --output "artifacts/learning-readiness-${GITHUB_RUN_ID}.json"
+
       - name: Upload daily reports
         if: always()
         uses: actions/upload-artifact@v4

@@ -150,8 +150,10 @@ def test_testnet_session_and_reconciliation_runner_are_safe():
     assert 'ALLOW_LIVE_TRADING: "false"' in testnet
     assert 'AUTO_RECONCILE_CLOSE_ENABLED: "true"' in testnet
     assert 'AUTO_RECONCILE_CLOSE_LIVE: "false"' in testnet
+    assert 'SHADOW_MODE: "true"' in testnet
     assert 'TRADING_EXECUTION_ENABLED: "true"' in run_bot
     assert 'ALLOW_NEW_ENTRIES: "false"' in run_bot
+    assert 'SHADOW_MODE: "true"' in run_bot
     assert 'AUTO_RECONCILE_CLOSE_ENABLED: "true"' in run_bot
     assert 'AUTO_RECONCILE_CLOSE_LIVE: "false"' in run_bot
     assert "SUPABASE_WRITE_KEY: ${{ secrets.SUPABASE_WRITE_KEY }}" in run_bot
