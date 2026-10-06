@@ -72,6 +72,8 @@ def build_shadow_observation(
     scalp_sell = close >= upper and rsi > scalp_sell_rsi
 
     action = str(signal.get("action") or "HOLD").upper()
+    if action.startswith("TRADEDIRECTION."):
+        action = action.split(".", 1)[1]
     if action in {"LONG", "BUY"}:
         direction = "LONG"
         checks = checks_long
