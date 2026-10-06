@@ -353,6 +353,58 @@ class StateManager:
             logger.error("❌ update_strategy_signal_status: {}", e)
             return False
 
+    def record_shadow_signal(self, shadow_data: Dict[str, Any]) -> bool:
+        """Upsert a paper observation; it is never an execution record."""
+        if not self.client:
+            return False
+        try:
+            self.client.table("shadow_signals").upsert(
+                shadow_data, on_conflict="idempotency_key"
+            ).execute()
+            return True
+        except Exception as e:
+            logger.error("❌ record_shadow_signal: {}", e)
+            return False
+
+    def get_open_shadow_signals(self, symbol: str, limit: int = 100) -> list[Dict[str, Any]]:
+        """Read open paper observations for one symbol only."""
+        if not self.client:
+            return []
+        try:
+            result = (
+                self.client.table("shadow_signals")
+                .select("*")
+                .eq("symbol", symbol)
+                .eq("status", "OPEN")
+                .order("candle_closed_at", desc=False)
+                .limit(limit)
+                .execute()
+            )
+            return list(getattr(result, "data", None) or [])
+        except Exception as e:
+            logger.error("❌ get_open_shadow_signals: {}", e)
+            return []
+
+    def update_shadow_signal(self, idempotency_key: str, updates: Dict[str, Any]) -> bool:
+        """Update only observational outcome fields."""
+        if not self.client or not idempotency_key:
+            return False
+        allowed = {
+            "status", "mfe_pct", "mae_pct", "net_return_pct", "exit_reason",
+            "evaluated_candles", "evaluated_at",
+        }
+        payload = {key: value for key, value in updates.items() if key in allowed}
+        if not payload:
+            return False
+        try:
+            self.client.table("shadow_signals").update(payload).eq(
+                "idempotency_key", idempotency_key
+            ).execute()
+            return True
+        except Exception as e:
+            logger.error("❌ update_shadow_signal: {}", e)
+            return False
+
     def record_learning_event(self, event_data: Dict[str, Any]) -> bool:
         """Append an analytics event; never controls execution or accounting."""
         if not self.client:

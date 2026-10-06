@@ -25,7 +25,11 @@ from bot.core.position_manager import PositionManager
 from bot.data.state_manager import StateManager
 from bot.data.universe_manager import UniverseManager
 from bot.notifications.telegram_notifier import TelegramNotifier
-from bot.learning.shadow import recommend_shadow_action
+from bot.learning.shadow import (
+    build_shadow_observation,
+    recommend_shadow_action,
+    update_shadow_outcome,
+)
 
 logger = logging.getLogger("ApexTrader.Main")
 
@@ -894,6 +898,34 @@ class ApexTraderBot:
                 # observational and runs before the entry gate so read-only
                 # reconciliation runners can still collect signal evidence.
                 signal_result = self.signal_engine.evaluate_market(candles, symbol)
+                # Shadow is evaluated on the same closed-candle frame as the
+                # live signal, but is stored in an independent paper ledger.
+                if self.config.shadow_mode:
+                    closed_frame = candles.iloc[:-1].copy()
+                    analyzed_shadow = self.signal_engine.indicator_calculator.calculate_all(
+                        closed_frame
+                    )
+                    for open_shadow in self.state_manager.get_open_shadow_signals(symbol):
+                        outcome = update_shadow_outcome(open_shadow, analyzed_shadow)
+                        if outcome:
+                            evaluated = int(open_shadow.get("evaluated_candles") or 0) + 1
+                            horizon = int(open_shadow.get("horizon_candles") or 12)
+                            if evaluated >= horizon and outcome.get("status") == "OPEN":
+                                outcome["status"] = "TIMEOUT"
+                                outcome["exit_reason"] = "horizon_reached"
+                            outcome["evaluated_candles"] = evaluated
+                            outcome["evaluated_at"] = datetime.now(timezone.utc).isoformat()
+                            self.state_manager.update_shadow_signal(
+                                open_shadow.get("idempotency_key", ""), outcome
+                            )
+                    observation = build_shadow_observation(
+                        analyzed_shadow,
+                        signal_result,
+                        symbol,
+                        self.config.trading.timeframe,
+                        horizon_candles=int(os.getenv("SHADOW_HORIZON_CANDLES", "12")),
+                    )
+                    self.state_manager.record_shadow_signal(observation)
                 from bot.signals.signal_engine import TradeDirection
                 action_val = signal_result.get("action")
                 if action_val in (TradeDirection.HOLD, "HOLD"):

@@ -118,9 +118,16 @@ class SignalEngine:
             close = float(latest.get("close", 0.0))
             result["indicators"] = {
                 "close": close,
+                "high": float(latest.get("high", close)),
+                "low": float(latest.get("low", close)),
+                "volume": float(latest.get("volume", 0.0)),
                 "rsi": float(latest.get("rsi", 50.0)),
                 "ema_200": float(latest.get("ema_200", close)),
+                "ema_50": float(latest.get("ema_50", close)),
+                "macd": float(latest.get("macd", 0.0)),
+                "macd_signal": float(latest.get("macd_signal", 0.0)),
                 "bb_upper": float(latest.get("bb_upper", close)),
+                "bb_middle": float(latest.get("bb_middle", close)),
                 "bb_lower": float(latest.get("bb_lower", close)),
                 "atr_value": float(latest.get("atr_value", 0.0) or 0.0),
             }
