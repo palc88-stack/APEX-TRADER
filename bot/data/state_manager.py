@@ -243,6 +243,39 @@ class StateManager:
         except Exception as e:
             logger.error("❌ mark_cycle_completed: {}", e)
 
+    async def sync_trade_counters(self) -> bool:
+        """Synchronize dashboard counters from the confirmed trade ledger.
+
+        ``bot_state`` is a projection for the dashboard, while ``trades`` is
+        the accounting source of truth. Rebuild only closed/reconciled counts
+        here so a stale projection cannot report zero after real fills.
+        """
+        if not self.client:
+            return False
+        try:
+            result = (
+                self.client.table("trades")
+                .select("status,pnl")
+                .in_("status", ["CLOSED", "RECONCILED_FLAT"])
+                .limit(10000)
+                .execute()
+            )
+            rows = list(getattr(result, "data", None) or [])
+            total = len(rows)
+            winning = sum(float(row.get("pnl") or 0) > 0 for row in rows)
+            now_utc = datetime.now(timezone.utc).isoformat()
+            self.client.table("bot_state").upsert({
+                "id": 1,
+                "total_trades": total,
+                "winning_trades": winning,
+                "updated_at": now_utc,
+            }).execute()
+            logger.info("📊 Trade counters synchronized: total={}, winning={}", total, winning)
+            return True
+        except Exception as e:
+            logger.error("❌ sync_trade_counters: {}", e)
+            return False
+
     async def mark_bot_stopped(self) -> None:
         """تسجيل إيقاف البوت في قاعدة البيانات."""
         if not self.client:
@@ -285,7 +318,11 @@ class StateManager:
     # ─── Trades ───────────────────────────────────────────────────────────────
 
     def record_strategy_signal(self, signal_data: Dict[str, Any]) -> bool:
-        """Persist an accepted non-HOLD signal without making it a fill."""
+        """Persist a signal evaluation without making it a fill.
+
+        ``candidate`` records are eligible non-HOLD signals; ``no_signal``
+        records explain closed-candle HOLD decisions for operational diagnosis.
+        """
         if not self.client:
             logger.warning("⚠️ strategy signal not persisted: Supabase unavailable")
             return False
@@ -298,6 +335,22 @@ class StateManager:
             # Signal attribution must not crash the market cycle; the trade/fill
             # ledger remains the source of accounting truth.
             logger.error("❌ record_strategy_signal: {}", e)
+            return False
+
+    def update_strategy_signal_status(
+        self, idempotency_key: str, status: str, reason: str
+    ) -> bool:
+        """Update an audit signal after a deterministic execution gate."""
+        if not self.client or not idempotency_key:
+            return False
+        try:
+            self.client.table("strategy_signals").update({
+                "status": status,
+                "reason": reason,
+            }).eq("idempotency_key", idempotency_key).execute()
+            return True
+        except Exception as e:
+            logger.error("❌ update_strategy_signal_status: {}", e)
             return False
 
     def record_learning_event(self, event_data: Dict[str, Any]) -> bool:

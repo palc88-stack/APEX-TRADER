@@ -897,6 +897,32 @@ class ApexTraderBot:
                 from bot.signals.signal_engine import TradeDirection
                 action_val = signal_result.get("action")
                 if action_val in (TradeDirection.HOLD, "HOLD"):
+                    candle_key = str(candles.index[-1]) if len(candles.index) else "unknown"
+                    indicators = signal_result.get("indicators") or {}
+                    no_signal_key = f"signal:{symbol}:{candle_key}:HOLD"
+                    self.state_manager.record_strategy_signal({
+                        "id": str(uuid.uuid5(uuid.NAMESPACE_URL, no_signal_key)),
+                        "idempotency_key": no_signal_key,
+                        "symbol": symbol,
+                        "mode": str(self.config.active_mode),
+                        "strategy": signal_result.get("strategy") or "ROUTER",
+                        "strategy_subtype": signal_result.get("strategy_subtype") or "none",
+                        "action": "HOLD",
+                        "confidence": signal_result.get("confidence", 0.0),
+                        "rule_score": signal_result.get("rule_score", 0.0),
+                        "reason": signal_result.get("reason", "No valid signal detected"),
+                        "entry_price": indicators.get("close") or current_price,
+                        "atr_value": indicators.get("atr_value") or None,
+                        "status": "no_signal",
+                    })
+                    logger.info(
+                        "ℹ️ No entry signal for {}: reason={} rsi={} ema200={} atr={}",
+                        symbol,
+                        signal_result.get("reason", "No valid signal detected"),
+                        indicators.get("rsi"),
+                        indicators.get("ema_200"),
+                        indicators.get("atr_value"),
+                    )
                     continue
                 strategy = signal_result.get("strategy") or "UNKNOWN"
                 strategy_subtype = signal_result.get("strategy_subtype") or "unknown"
@@ -973,6 +999,11 @@ class ApexTraderBot:
                     type("S", (), signal_result)(),
                     open_positions=symbol_positions
                 ):
+                    self.state_manager.update_strategy_signal_status(
+                        signal_idempotency_key,
+                        "rejected_risk_limits",
+                        "RiskManager.check_risk_limits rejected the candidate",
+                    )
                     continue
 
                 # 4. حساب الأسعار وتنفيذ الأمر
@@ -1012,6 +1043,11 @@ class ApexTraderBot:
                 balance = await self.exchange.get_balance()
                 if balance <= 0:
                     logger.error("Skipping new entry for %s: balance unavailable", symbol)
+                    self.state_manager.update_strategy_signal_status(
+                        signal_idempotency_key,
+                        "rejected_balance",
+                        "Exchange balance unavailable or non-positive",
+                    )
                     continue
                 self._current_balance = balance
                 size_usd = self._calculate_position_size(
@@ -1030,12 +1066,22 @@ class ApexTraderBot:
                     stop_loss=stop_loss,
                     direction=side
                 ):
+                    self.state_manager.update_strategy_signal_status(
+                        signal_idempotency_key,
+                        "rejected_risk",
+                        "RiskManager.evaluate_risk rejected the candidate",
+                    )
                     continue
 
                 if entries_started >= self.config.trading.max_new_entries_per_cycle:
                     logger.info(
                         "Skipping new entry for %s: per-cycle entry limit reached",
                         symbol,
+                    )
+                    self.state_manager.update_strategy_signal_status(
+                        signal_idempotency_key,
+                        "rejected_cycle_limit",
+                        "Maximum new entries per cycle already reached",
                     )
                     continue
 
@@ -1048,6 +1094,11 @@ class ApexTraderBot:
                 )
                 if not slot:
                     logger.info("Skipping %s: all global position slots are occupied", symbol)
+                    self.state_manager.update_strategy_signal_status(
+                        signal_idempotency_key,
+                        "rejected_no_slot",
+                        "All global position slots are occupied",
+                    )
                     continue
 
                 # size_usd is margin; the exchange order uses the leveraged notional.
@@ -1379,6 +1430,7 @@ class ApexTraderBot:
                     raise RuntimeError("execution lease lost; refusing further trading cycles")
                 await self.process_market_cycle()
                 cycles_done += 1
+                await self.state_manager.sync_trade_counters()
                 await self.state_manager.mark_cycle_completed()
                 if single_cycle and cycles_done >= max_cycles:
                     logger.info(f"✅ اكتمل {max_cycles} دورة(ات) — خروج من APEX_RUN_CYCLES={max_cycles}")
