@@ -6,7 +6,8 @@ from bot.learning.shadow import build_shadow_observation, update_shadow_outcome
 def frame():
     index = pd.date_range("2026-01-01", periods=25, freq="5min", tz="UTC")
     close = [100.0] * 24 + [98.0]
-    return pd.DataFrame({
+    result = pd.DataFrame({
+        "timestamp": index,
         "open": close,
         "high": [v + 0.5 for v in close],
         "low": [v - 0.5 for v in close],
@@ -21,7 +22,8 @@ def frame():
         "bb_upper": [101.0] * 25,
         "bb_middle": [100.0] * 25,
         "bb_lower": [99.0] * 24 + [98.5],
-    }, index=index)
+    }, index=range(25))
+    return result
 
 
 def test_shadow_observation_is_idempotent_and_observational():
@@ -32,6 +34,7 @@ def test_shadow_observation_is_idempotent_and_observational():
     assert result["classification"] in {"NO_SIGNAL", "NEAR_MISS", "SHADOW_CANDIDATE"}
     assert result["idempotency_key"]
     assert result["model_version"] == "shadow-rules-v2"
+    assert result["candle_closed_at"].startswith("2026-01-01T02:00:00")
     assert "pnl" not in result
 
 

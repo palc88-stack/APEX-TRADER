@@ -100,7 +100,7 @@ def build_shadow_observation(
     else:
         classification = "NO_SIGNAL"
 
-    ts = df.index[-1]
+    ts = latest.get("timestamp", df.index[-1])
     candle_time = ts.isoformat() if hasattr(ts, "isoformat") else str(ts)
     strategy = signal.get("strategy") or "ROUTER"
     subtype = signal.get("strategy_subtype") or "none"
@@ -143,7 +143,16 @@ def update_shadow_outcome(row: Dict[str, Any], df: pd.DataFrame) -> Dict[str, An
         return {}
     try:
         signal_time = pd.Timestamp(row.get("candle_closed_at"))
-        frame = df[df.index > signal_time]
+        signal_time = (
+            signal_time.tz_localize("UTC")
+            if signal_time.tzinfo is None
+            else signal_time.tz_convert("UTC")
+        )
+        if "timestamp" in df.columns:
+            candle_times = pd.to_datetime(df["timestamp"], utc=True, errors="coerce")
+            frame = df[candle_times > signal_time]
+        else:
+            frame = df[df.index > signal_time]
     except (TypeError, ValueError):
         frame = df
     if frame.empty:
