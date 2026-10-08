@@ -99,6 +99,12 @@ async def test_binance_protection_uses_algo_order_api():
         def milliseconds(self):
             return 1700000000000
 
+        def amount_to_precision(self, symbol, amount):
+            return f"{amount:.3f}"
+
+        def price_to_precision(self, symbol, price):
+            return f"{price:.1f}"
+
         async def request(self, path, api, method, params):
             self.calls.append((path, api, method, params))
             return {"algoId": len(self.calls)}
@@ -120,6 +126,8 @@ async def test_binance_protection_uses_algo_order_api():
         assert params["reduceOnly"] == "true"
         assert params["type"] in {"STOP_MARKET", "TAKE_PROFIT_MARKET"}
         assert "triggerPrice" in params
+        assert isinstance(params["triggerPrice"], float)
+        assert params["triggerPrice"] in {90000.0, 80000.0}
 
 
 def test_workflow_has_no_schedule_or_live_secret():

@@ -1376,7 +1376,7 @@ class ApexTraderBot:
                         message,
                     )
                     continue
-                logger.opt(exception=True).error("❌ خطأ في {}: {}", symbol, message)
+                logger.error("❌ خطأ في %s: %s", symbol, message, exc_info=True)
                 self.state_manager.record_learning_event({
                     "event_type": "execution_error",
                     "symbol": symbol,

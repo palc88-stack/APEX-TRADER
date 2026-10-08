@@ -404,6 +404,14 @@ class ExchangeManager:
                 order_amount = await self._format_amount(symbol, order_amount)
             else:  # lightweight test doubles may not expose market precision APIs
                 order_amount = float(order_amount)
+            # Algo orders are sent through the raw Binance endpoint, so the
+            # trigger price must be normalized explicitly as well. Passing a
+            # six-decimal Python float for a market with a coarser tick size
+            # causes Binance -1111 (precision over maximum).
+            if hasattr(exchange, "price_to_precision"):
+                trigger_price = await self._format_price(symbol, trigger_price)
+            else:  # lightweight test doubles may not expose price precision APIs
+                trigger_price = self._finite_positive(trigger_price, "trigger_price")
             params = {
                 "algoType": "CONDITIONAL",
                 "symbol": market_id,
