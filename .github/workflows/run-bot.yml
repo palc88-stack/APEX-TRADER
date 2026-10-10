@@ -1,8 +1,7 @@
 name: APEX Trader Run
 
 on:
-  schedule:
-    - cron: "1,6,11,16,21,26,31,36,41,46,51,56 * * * *"
+  # Manual reconciliation fallback; Botkeep owns continuous execution.
   workflow_dispatch: {}
 
 concurrency:
@@ -18,10 +17,10 @@ jobs:
     timeout-minutes: 3
     env:
       PYTHONPATH: ${{ github.workspace }}
-      ENVIRONMENT: ${{ vars.ENVIRONMENT || 'testnet' }}
-      BINANCE_TESTNET: ${{ vars.BINANCE_TESTNET || 'true' }}
-      ALLOW_LIVE_TRADING: ${{ vars.ALLOW_LIVE_TRADING || 'false' }}
-      # Allow reduce-only reconciliation closes, but never new entries.
+      ENVIRONMENT: testnet
+      BINANCE_TESTNET: "true"
+      ALLOW_LIVE_TRADING: "false"
+      # Manual fallback may reconcile Testnet positions, but never open entries.
       TRADING_EXECUTION_ENABLED: "true"
       ALLOW_NEW_ENTRIES: "false"
       SHADOW_MODE: "true"

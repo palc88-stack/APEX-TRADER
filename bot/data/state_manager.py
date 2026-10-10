@@ -183,7 +183,7 @@ class StateManager:
                 "updated_at": now_utc,
                 "database_connected": True,
             }).execute()
-            logger.info("💓 Heartbeat مُكتوبة: {} | is_running=true", now_utc)
+            logger.debug("💓 Heartbeat مُكتوبة: {} | is_running=true", now_utc)
         except Exception as e:
             logger.error("❌ update_heartbeat: {}", e)
 
@@ -194,12 +194,12 @@ class StateManager:
         daily_realized_pnl: Optional[float] = None,
         daily_loss_limit: Optional[float] = None,
         risk_day: Optional[str] = None,
-    ) -> None:
+    ) -> bool:
         """
         تحديث الحالة المالية للبوت — يُستخدم من main.py.
         """
         if not self.client:
-            return
+            return False
         try:
             updates: Dict[str, Any] = {
                 "id": 1,  # ✅ إضافة id لضمان upsert يعمل حتى بدون INSERT مسبق
@@ -219,14 +219,16 @@ class StateManager:
                 updates["risk_day"] = risk_day
             # ✅ استخدام upsert بدلاً من update — يضمن وجود الصف
             self.client.table("bot_state").upsert(updates).execute()
-            logger.info(
+            logger.debug(
                 "📊 Bot status مُحدَّث: balance={}, loss_used={}, pnl={}",
                 updates.get("current_balance"),
                 updates.get("daily_loss_used_usd"),
                 updates.get("daily_realized_pnl")
             )
+            return True
         except Exception as e:
             logger.error("❌ update_bot_status: {}", e)
+            return False
 
     async def mark_cycle_completed(self) -> None:
         """سجل دورة مكتملة فقط بعد نجاح كل عمليات الدورة."""

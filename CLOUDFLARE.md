@@ -19,10 +19,17 @@ Before the daily reconciliation runs, the Worker acquires the shared
 holds it, the Worker skips the run without touching orders. The four-hour
 universe refresh uses the separate `apex-universe-refresh` lease.
 
+Botkeep is the continuously running, order-capable Python controller and holds
+the shared execution lease while it is active. GitHub workflows that can
+reconcile or trade are manual-dispatch fallbacks only; the separate daily
+GitHub test checks remain read-only. The lease prevents either scheduled
+read-only supervision or a deliberately dispatched fallback from acting as a
+second concurrent execution owner.
+
 The Worker remains read-only with respect to exchange orders: it never opens,
 cancels, or closes an order. The shared trading lease is a guardrail so a
-future write-capable reconciliation path cannot run concurrently with the
-GitHub Actions bot.
+future write-capable reconciliation path cannot run concurrently with Botkeep
+or a manually dispatched GitHub fallback.
 
 The four-hour universe schedule is intentionally removed from GitHub Actions to
 avoid duplicate snapshot activation. `.github/workflows/universe-refresh.yml`

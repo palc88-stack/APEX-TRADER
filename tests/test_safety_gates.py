@@ -147,14 +147,18 @@ def test_testnet_session_uses_dynamic_universe():
     assert 'AUTO_SYMBOL_SCAN: "false"' in workflow
 
 
-def test_testnet_session_and_reconciliation_runner_are_safe():
+def test_botkeep_owns_scheduled_execution_and_github_fallback_is_manual():
     testnet = (ROOT / ".github/workflows/testnet-session.yml").read_text()
     run_bot = (ROOT / ".github/workflows/run-bot.yml").read_text()
     universe = (ROOT / ".github/workflows/universe-refresh.yml").read_text()
     assert "workflow_dispatch:" in testnet
-    assert "  schedule:" in testnet
-    assert 'cron: "0 */2 * * *"' in testnet
+    assert "  schedule:" not in testnet
+    assert "workflow_dispatch:" in run_bot
+    assert "  schedule:" not in run_bot
     assert 'TRADING_EXECUTION_ENABLED: "true"' in testnet
+    assert "ENVIRONMENT: testnet" in run_bot
+    assert 'BINANCE_TESTNET: "true"' in run_bot
+    assert 'ALLOW_LIVE_TRADING: "false"' in run_bot
     assert 'ALLOW_LIVE_TRADING: "false"' in testnet
     assert 'AUTO_RECONCILE_CLOSE_ENABLED: "true"' in testnet
     assert 'AUTO_RECONCILE_CLOSE_LIVE: "false"' in testnet
