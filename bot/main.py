@@ -30,6 +30,7 @@ from bot.learning.shadow import (
     recommend_shadow_action,
     update_shadow_outcome,
 )
+from bot.learning.committee_shadow import build_committee_assessment
 
 logger = logging.getLogger("ApexTrader.Main")
 
@@ -925,6 +926,7 @@ class ApexTraderBot:
                         self.config.trading.timeframe,
                         horizon_candles=int(os.getenv("SHADOW_HORIZON_CANDLES", "12")),
                     )
+                    observation["features"]["committee"] = build_committee_assessment(observation)
                     self.state_manager.record_shadow_signal(observation)
                 from bot.signals.signal_engine import TradeDirection
                 action_val = signal_result.get("action")
@@ -1514,7 +1516,7 @@ if __name__ == "__main__":
     _logger.add(
         sys.stdout,
         format="<level>{level}</level> | {message}",
-        level=0,
+        level="INFO",
         colorize=False,
     )
 

@@ -1,9 +1,7 @@
 name: Binance Testnet Session
 
 on:
-  # Testnet only: bounded automatic validation, never Live trading.
-  schedule:
-    - cron: "0 */2 * * *"
+  # Manual Testnet contingency only; Botkeep owns continuous execution.
   workflow_dispatch:
     inputs:
       cycles:
