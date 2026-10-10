@@ -194,12 +194,12 @@ class StateManager:
         daily_realized_pnl: Optional[float] = None,
         daily_loss_limit: Optional[float] = None,
         risk_day: Optional[str] = None,
-    ) -> None:
+    ) -> bool:
         """
         تحديث الحالة المالية للبوت — يُستخدم من main.py.
         """
         if not self.client:
-            return
+            return False
         try:
             updates: Dict[str, Any] = {
                 "id": 1,  # ✅ إضافة id لضمان upsert يعمل حتى بدون INSERT مسبق
@@ -225,8 +225,10 @@ class StateManager:
                 updates.get("daily_loss_used_usd"),
                 updates.get("daily_realized_pnl")
             )
+            return True
         except Exception as e:
             logger.error("❌ update_bot_status: {}", e)
+            return False
 
     async def mark_cycle_completed(self) -> None:
         """سجل دورة مكتملة فقط بعد نجاح كل عمليات الدورة."""

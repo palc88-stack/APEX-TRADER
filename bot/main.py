@@ -499,8 +499,54 @@ class ApexTraderBot:
         }
         return bool(self.state_manager.save_trade_state(record))
 
+    async def _roll_risk_day_if_needed(self, target_day: str | None = None) -> bool:
+        """Refresh the daily risk projection at UTC day rollover; fail closed."""
+        target_day = target_day or datetime.now(timezone.utc).date().isoformat()
+        if target_day == self._risk_day:
+            return False
+
+        metrics = self.state_manager.get_daily_confirmed_metrics()
+        if metrics is None:
+            raise RuntimeError(
+                "confirmed daily risk metrics unavailable; refusing to roll risk day"
+            )
+
+        previous = (
+            self._risk_day,
+            self._daily_loss_used,
+            self._daily_realized_pnl,
+        )
+        self._risk_day = target_day
+        self._daily_loss_used = float(metrics.get("loss_used") or 0.0)
+        self._daily_realized_pnl = float(metrics.get("realized_pnl") or 0.0)
+        persisted = await self.state_manager.update_bot_status(
+            balance=self._current_balance if self._current_balance > 0 else None,
+            daily_loss_used=self._daily_loss_used,
+            daily_realized_pnl=self._daily_realized_pnl,
+            daily_loss_limit=self._daily_loss_limit if self._daily_loss_limit > 0 else None,
+            risk_day=target_day,
+        )
+        if not persisted:
+            (
+                self._risk_day,
+                self._daily_loss_used,
+                self._daily_realized_pnl,
+            ) = previous
+            raise RuntimeError(
+                "could not persist daily risk rollover; refusing to continue trading"
+            )
+
+        logger.info(
+            "Daily risk state rolled to {} from confirmed trades: loss_used={}, pnl={}",
+            target_day,
+            self._daily_loss_used,
+            self._daily_realized_pnl,
+        )
+        return True
+
     async def process_market_cycle(self) -> None:
         logger.info(f"Market cycle: {datetime.now(timezone.utc).isoformat()}")
+        await self._roll_risk_day_if_needed()
 
         if self.config.trading.auto_symbol_scan:
             now = time.time()
