@@ -469,7 +469,8 @@ class StateManager:
             status_map = {
                 "open": "submitted", "pending": "submitted", "new": "submitted",
                 "closed": "filled", "partially-filled": "partially_filled",
-                "partial": "partially_filled", "cancelled": "canceled",
+                "partial": "partially_filled", "partially_filled": "partially_filled",
+                "cancelled": "canceled", "expired": "canceled",
                 "rejected": "rejected",
             }
             raw_status = str(normalized.get("status") or "unknown").lower()
@@ -486,12 +487,85 @@ class StateManager:
             logger.error("❌ record_trade_order: {}", e)
             return None
 
+    def get_reconciliation_close_orders(self, trade_id: str) -> Optional[List[Dict[str, Any]]]:
+        """Return the newest reduce-only order intents for one unresolved trade.
+
+        None means the query failed; an empty list means no prior close intent
+        exists. The caller must not treat a failed query as an empty ledger.
+        """
+        if not self.client:
+            return None
+        try:
+            result = (
+                self.client.table("trade_orders")
+                .select(
+                    "id,trade_id,symbol,side,order_type,status,exchange_order_id,"
+                    "client_order_id,requested_quantity,reduce_only,submitted_at,raw_payload"
+                )
+                .eq("trade_id", str(trade_id))
+                .eq("reduce_only", True)
+                .order("submitted_at", desc=True)
+                .limit(20)
+                .execute()
+            )
+            return list(getattr(result, "data", None) or [])
+        except Exception as e:
+            logger.error("❌ get_reconciliation_close_orders: {}", e)
+            return None
+
+    def update_trade_order(self, order_id: int, updates: Dict[str, Any]) -> bool:
+        """Update a previously persisted order intent after exchange response."""
+        if not self.client or not order_id:
+            return False
+        try:
+            normalized = dict(updates)
+            if "status" in normalized:
+                status = str(normalized["status"] or "unknown").lower().replace("-", "_")
+                status_map = {
+                    "open": "submitted", "new": "submitted", "pending": "submitted",
+                    "closed": "filled", "partially_filled": "partially_filled",
+                    "cancelled": "canceled", "expired": "canceled",
+                }
+                status = status_map.get(status, status)
+                if status not in {
+                    "submitted", "partially_filled", "filled", "canceled",
+                    "rejected", "unknown", "needs_reconciliation",
+                }:
+                    status = "unknown"
+                normalized["status"] = status
+            normalized["updated_at"] = datetime.now(timezone.utc).isoformat()
+            result = (
+                self.client.table("trade_orders")
+                .update(normalized)
+                .eq("id", int(order_id))
+                .select("id")
+                .execute()
+            )
+            return bool(getattr(result, "data", None))
+        except Exception as e:
+            logger.error("❌ update_trade_order: {}", e)
+            return False
+
     def record_trade_fill(self, fill_data: Dict[str, Any]) -> bool:
         """Persist one exchange-confirmed fill; never infer it from candles."""
         if not self.client:
             logger.error("❌ trade fill ledger unavailable: Supabase is required")
             return False
         try:
+            # The bot stores an aggregate FillDetails row per order. Avoid
+            # duplicating that row if a restart occurs after the fill insert
+            # but before the trade-state update.
+            ledger_order_id = fill_data.get("order_id")
+            if ledger_order_id is not None:
+                existing = (
+                    self.client.table("trade_fills")
+                    .select("id")
+                    .eq("order_id", int(ledger_order_id))
+                    .limit(1)
+                    .execute()
+                )
+                if getattr(existing, "data", None):
+                    return True
             self.client.table("trade_fills").insert(fill_data).execute()
             return True
         except Exception as e:
@@ -539,6 +613,34 @@ class StateManager:
             "reconciliation_note": note,
         })
 
+    def get_confirmed_exit_fills(
+        self, trade_id: str, exit_side: str
+    ) -> Optional[List[Dict[str, Any]]]:
+        """Read all confirmed exit fills; None signals unavailable/incomplete evidence."""
+        if not self.client:
+            return None
+        try:
+            result = (
+                self.client.table("trade_fills")
+                .select("quantity,price,fee_amount,side,price_source,quantity_source,fee_source")
+                .eq("trade_id", str(trade_id))
+                .eq("side", str(exit_side).lower())
+                .limit(500)
+                .execute()
+            )
+            rows = list(getattr(result, "data", None) or [])
+            if any(
+                row.get("price_source") != "exchange_fill"
+                or row.get("quantity_source") != "exchange_fill"
+                or row.get("fee_source") != "exchange_fill"
+                for row in rows
+            ):
+                return None
+            return rows
+        except Exception as e:
+            logger.error("❌ get_confirmed_exit_fills: {}", e)
+            return None
+
     def mark_reconciliation_closed(
         self,
         trade: Dict[str, Any],
@@ -549,22 +651,48 @@ class StateManager:
     ) -> bool:
         """Close a reconciliation record only after exchange fill evidence exists."""
         entry_price = float(trade.get("entry_price") or 0.0)
-        entry_quantity = float(trade.get("entry_quantity") or fill.quantity or 0.0)
         direction = str(trade.get("direction") or "LONG").upper()
-        gross_pnl = (
-            (float(fill.price) - entry_price) * entry_quantity
-            if direction in {"LONG", "BUY"}
-            else (entry_price - float(fill.price)) * entry_quantity
-        )
-        realized_pnl = gross_pnl - float(trade.get("entry_fee") or 0.0) - float(fill.fee)
+        entry_quantity = float(trade.get("entry_quantity") or 0.0)
+        if (
+            entry_price <= 0
+            or entry_quantity <= 0
+            or trade.get("entry_price_source") != "exchange_fill"
+            or trade.get("entry_quantity_source") != "exchange_fill"
+            or trade.get("entry_fee_source") != "exchange_fill"
+        ):
+            return False
+        exit_side = "sell" if direction in {"LONG", "BUY"} else "buy"
+        exit_fills = self.get_confirmed_exit_fills(str(trade.get("id") or ""), exit_side)
+        if not exit_fills:
+            return False
+        try:
+            total_exit_quantity = sum(float(row.get("quantity") or 0.0) for row in exit_fills)
+            exit_fees = sum(float(row.get("fee_amount") or 0.0) for row in exit_fills)
+            gross_pnl = sum(
+                (
+                    (float(row["price"]) - entry_price)
+                    if direction in {"LONG", "BUY"}
+                    else (entry_price - float(row["price"]))
+                ) * float(row["quantity"])
+                for row in exit_fills
+            )
+            average_exit_price = sum(
+                float(row["price"]) * float(row["quantity"]) for row in exit_fills
+            ) / total_exit_quantity
+        except (KeyError, TypeError, ValueError, ZeroDivisionError):
+            return False
+        quantity_tolerance = max(1e-8, entry_quantity * 0.001)
+        if abs(total_exit_quantity - entry_quantity) > quantity_tolerance:
+            return False
+        realized_pnl = gross_pnl - float(trade.get("entry_fee") or 0.0) - exit_fees
         account_balance = float(trade.get("account_balance_at_entry") or 0.0)
         update = {
             **trade,
             "status": "CLOSED",
             "closing_order_id": order_id,
-            "exit_price": float(fill.price),
-            "exit_quantity": float(fill.quantity),
-            "exit_fee": float(fill.fee),
+            "exit_price": average_exit_price,
+            "exit_quantity": total_exit_quantity,
+            "exit_fee": exit_fees,
             "exit_fee_currency": fill.fee_currency or None,
             "exit_filled_at": fill.filled_at,
             "exit_slippage_bps": fill.slippage_bps,

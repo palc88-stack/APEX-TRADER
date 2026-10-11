@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import math
 import os
 import time
 import uuid
@@ -170,36 +171,103 @@ class ApexTraderBot:
             mode=str(self.config.active_mode)
         )
 
-    async def _reconcile_before_trading(self) -> None:
-        """Fail closed when local and exchange positions do not match."""
-        local = self.state_manager.get_open_trades_from_db()
+    async def _reconcile_before_trading(self, *, fail_closed: bool = True) -> bool:
+        """Refresh exchange/DB consistency before every cycle; block entries on uncertainty."""
+        try:
+            local = self.state_manager.get_open_trades_from_db()
+        except Exception as exc:
+            self._reconciliation_blocked_symbols = set()
+            if fail_closed:
+                raise RuntimeError("cannot read local trades for reconciliation") from exc
+            logger.error("❌ Cannot read local trades; skipping trading cycle: %s", exc)
+            return False
+
         self._reconciliation_blocked_symbols = {
             str(trade.get("symbol")) for trade in local
             if trade.get("status") == "NEEDS_RECONCILIATION" and trade.get("symbol")
         }
         result = await self.exchange.get_all_open_positions_result()
         if not result.ok:
-            raise RuntimeError("cannot reconcile exchange positions: " + str(result.error))
+            self._reconciliation_blocked_symbols.update(
+                str(trade.get("symbol")) for trade in local if trade.get("symbol")
+            )
+            if fail_closed:
+                raise RuntimeError("cannot reconcile exchange positions: " + str(result.error))
+            logger.error("❌ Exchange positions unavailable; skipping entries this cycle: %s", result.error)
+            return False
 
         local_open = {
             str(trade.get("symbol")): trade for trade in local
             if trade.get("status") == "OPEN" and trade.get("symbol")
         }
-        exchange_symbols = {
-            str(position.get("symbol")) for position in result.data
+        exchange_positions = {
+            str(position.get("symbol")): position for position in result.data
             if position.get("symbol")
         }
+        exchange_symbols = set(exchange_positions)
         self._release_stale_position_slots(
             local_trades=local,
             exchange_symbols=exchange_symbols,
         )
+        unresolved_persistence: set[str] = set()
         for symbol, trade in local_open.items():
-            if symbol not in exchange_symbols:
-                self.state_manager.mark_trade_needs_reconciliation(
+            position = exchange_positions.get(symbol)
+            if position is None:
+                saved = self.state_manager.mark_trade_needs_reconciliation(
                     trade,
-                    "local OPEN trade missing from exchange during startup reconciliation",
+                    "local OPEN trade missing from exchange during periodic reconciliation",
                 )
                 self._reconciliation_blocked_symbols.add(symbol)
+                if not saved:
+                    unresolved_persistence.add(symbol)
+                continue
+
+            local_quantity = float(
+                trade.get("remaining_quantity") or trade.get("entry_quantity") or 0.0
+            )
+            info = position.get("info") or {}
+            exchange_quantity = abs(float(
+                position.get("contracts") or position.get("positionAmt")
+                or info.get("positionAmt") or 0.0
+            ))
+            tolerance = max(1e-8, local_quantity * 0.001)
+            if local_quantity > 0 and abs(local_quantity - exchange_quantity) > tolerance:
+                saved = self.state_manager.mark_trade_needs_reconciliation(
+                    trade,
+                    "local/exchange quantity mismatch during periodic reconciliation",
+                )
+                self._reconciliation_blocked_symbols.add(symbol)
+                if not saved:
+                    unresolved_persistence.add(symbol)
+
+            close_orders = self.state_manager.get_reconciliation_close_orders(
+                str(trade.get("id") or trade.get("entry_order_id") or "")
+            )
+            if close_orders is None:
+                self._reconciliation_blocked_symbols.add(symbol)
+                if fail_closed:
+                    raise RuntimeError(f"could not read close-order ledger for {symbol}")
+                logger.error("❌ Close-order ledger unavailable; skipping trading cycle for %s", symbol)
+                return False
+            latest_close = close_orders[0] if close_orders else None
+            if latest_close:
+                close_status = str(latest_close.get("status") or "unknown").lower().replace("-", "_")
+                raw_payload = latest_close.get("raw_payload") or {}
+                known_tp1_partial = (
+                    bool(trade.get("tp1_executed"))
+                    and str(raw_payload.get("reason") or "").lower() == "tp1"
+                )
+                unresolved_order = close_status in {
+                    "submitted", "partially_filled", "unknown", "needs_reconciliation"
+                } and not known_tp1_partial
+                if unresolved_order:
+                    saved = self.state_manager.mark_trade_needs_reconciliation(
+                        trade,
+                        "reduce-only close order is not conclusively settled at Binance",
+                    )
+                    self._reconciliation_blocked_symbols.add(symbol)
+                    if not saved:
+                        unresolved_persistence.add(symbol)
 
         local_symbols = set(local_open) | self._reconciliation_blocked_symbols
         orphans = exchange_symbols - local_symbols
@@ -227,18 +295,33 @@ class ApexTraderBot:
                 ):
                     unresolved.add(symbol)
             self._reconciliation_blocked_symbols.update(orphans)
-            if unresolved:
-                raise RuntimeError(
-                    "orphan exchange positions require manual reconciliation: "
-                    + ", ".join(sorted(unresolved))
-                )
+            unresolved_persistence.update(unresolved)
             logger.critical(
-                "🛑 Persisted orphan exchange positions as NEEDS_RECONCILIATION: %s",
-                ", ".join(sorted(orphans)),
+                "🛑 Persisted exchange-only positions for automatic reconciliation: %s",
+                ", ".join(sorted(orphans - unresolved)),
             )
 
+        if unresolved_persistence:
+            message = "could not persist reconciliation state: " + ", ".join(sorted(unresolved_persistence))
+            if fail_closed:
+                raise RuntimeError(message)
+            logger.error("❌ %s; skipping trading cycle", message)
+            return False
+
         await self._auto_close_reconciliation_positions()
+        try:
+            refreshed = self.state_manager.get_open_trades_from_db()
+        except Exception as exc:
+            if fail_closed:
+                raise RuntimeError("cannot refresh reconciliation state after automatic resolution") from exc
+            logger.error("❌ Cannot refresh reconciliation state; skipping trading cycle: %s", exc)
+            return False
+        self._reconciliation_blocked_symbols = {
+            str(trade.get("symbol")) for trade in refreshed
+            if trade.get("status") == "NEEDS_RECONCILIATION" and trade.get("symbol")
+        }
         await self._notify_reconciliation_required()
+        return True
 
     def _release_stale_position_slots(
         self,
@@ -292,132 +375,345 @@ class ApexTraderBot:
                     trade_id,
                 )
 
-    async def _auto_close_reconciliation_positions(self) -> None:
-        """Resolve reconciliation records without repeating close orders.
+    @staticmethod
+    def _exchange_position_quantity(position: dict[str, Any]) -> float:
+        info = position.get("info") or {}
+        raw = position.get("contracts") or position.get("positionAmt") or info.get("positionAmt") or 0
+        try:
+            quantity = abs(float(raw))
+        except (TypeError, ValueError):
+            return 0.0
+        return quantity if math.isfinite(quantity) else 0.0
 
-        A zero Binance position is authoritative for exposure: resolve the
-        local record as flat without inventing an exit price or PnL. When a
-        position still exists, submit at most one reduce-only close and wait
-        for an exchange-confirmed fill on later runs.
-        """
-        enabled = bool(getattr(self.config, "auto_reconcile_close_enabled", False))
-        live_allowed = bool(getattr(self.config, "auto_reconcile_close_live", False))
-        if not enabled or (
-            str(getattr(self.config, "environment", "testnet")).lower() == "live"
-            and not live_allowed
-        ):
+    @staticmethod
+    def _exchange_position_direction(position: dict[str, Any]) -> str:
+        info = position.get("info") or {}
+        side = str(
+            position.get("side") or position.get("positionSide")
+            or info.get("positionSide") or ""
+        ).strip().upper()
+        if side in {"LONG", "SHORT"}:
+            return side
+        raw = position.get("positionAmt") or info.get("positionAmt") or 0
+        try:
+            signed_quantity = float(raw)
+        except (TypeError, ValueError):
+            return ""
+        return "LONG" if signed_quantity > 0 else "SHORT" if signed_quantity < 0 else ""
+
+    async def _auto_close_reconciliation_positions(self) -> None:
+        """Automatically resolve Testnet mismatches with persisted, reduce-only attempts."""
+        if not bool(getattr(self.config, "auto_reconcile_close_enabled", False)):
+            return
+        environment = str(getattr(self.config, "environment", "testnet")).strip().lower()
+        if environment != "testnet" or getattr(self.exchange, "is_testnet", False) is not True:
+            logger.critical("🛑 Automatic reconciliation close is Testnet-only; no close was sent")
             return
 
         positions_result = await self.exchange.get_all_open_positions_result()
         if not positions_result.ok:
-            logger.error("❌ Cannot auto-reconcile: exchange position query failed")
+            logger.error("❌ Cannot auto-reconcile: exchange position query failed: %s", positions_result.error)
             return
         exchange_positions = {
             str(position.get("symbol")): position
             for position in positions_result.data
-            if position.get("symbol")
-            and abs(float(position.get("contracts") or position.get("positionAmt") or 0)) > 0
+            if position.get("symbol") and self._exchange_position_quantity(position) > 0
         }
-
         records = [
             trade for trade in self.state_manager.get_open_trades_from_db()
             if trade.get("status") == "NEEDS_RECONCILIATION" and trade.get("symbol")
         ]
+
+        async def persist_confirmed_fill(
+            trade: dict[str, Any], ledger_order_id: int, exchange_order_id: str, fill: Any,
+        ) -> bool:
+            if not fill or not fill.is_pnl_eligible:
+                return False
+            direction = str(trade.get("direction") or "LONG").upper()
+            return self.state_manager.record_trade_fill({
+                "order_id": ledger_order_id,
+                "trade_id": str(trade.get("id") or ""),
+                "exchange": self.config.exchange.primary_exchange(),
+                "symbol": str(trade.get("symbol") or ""),
+                "exchange_order_id": exchange_order_id,
+                "exchange_fill_id": fill.trade_ids[0] if fill.trade_ids else None,
+                "side": "sell" if direction in {"LONG", "BUY"} else "buy",
+                "quantity": fill.quantity,
+                "price": fill.price,
+                "fee_amount": fill.fee,
+                "fee_currency": fill.fee_currency or None,
+                "filled_at": fill.filled_at,
+                "price_source": fill.price_source.value,
+                "quantity_source": fill.quantity_source.value,
+                "fee_source": fill.fee_source.value,
+                "raw_payload": fill.as_record(),
+            })
+
+        def release_slot(trade: dict[str, Any]) -> None:
+            self.state_manager.release_position_slot(
+                trade_id=str(trade.get("entry_order_id") or trade.get("id") or "")
+            )
+
         for trade in records:
             symbol = str(trade["symbol"])
+            trade_id = str(trade.get("id") or trade.get("entry_order_id") or "")
             try:
-                # Binance confirms there is no remaining exposure. Do not
-                # place an order and do not fabricate an exit fill or PnL.
-                if symbol not in exchange_positions:
+                position = exchange_positions.get(symbol)
+                if position is None:
                     if self.state_manager.mark_reconciliation_flat(
                         trade,
-                        "exchange position is zero; no exit fill was available for automatic accounting",
+                        "Binance confirms zero exposure; no unverified exit price or PnL was recorded",
                     ):
-                        logger.warning("✅ Auto-resolved flat reconciliation record: {}", symbol)
+                        release_slot(trade)
+                        await self.exchange.cancel_protection_orders(symbol)
+                        logger.warning("✅ Auto-resolved flat reconciliation record: %s", symbol)
                     continue
 
-                # A persisted closing_order_id makes this path idempotent.
-                order_id = str(trade.get("closing_order_id") or "")
-                if not order_id:
-                    order = await self.exchange.close_position(
-                        symbol=symbol,
-                        position_id=str(trade.get("id") or ""),
-                        reason="auto_reconciliation_reduce_only",
-                        price=0.0,
-                    )
-                    if order.get("status") == "no_position":
-                        self.state_manager.save_trade_state({
-                            **trade,
-                            "exit_quantity_source": "exchange_position_zero",
-                            "reconciliation_note": "exchange position is zero; no exit fill was available for automatic accounting",
-                        })
-                        logger.warning("⏳ No exchange position for reconciliation record: %s", symbol)
-                        continue
-                    order_id = str(order.get("id") or order.get("orderId") or "")
-                    if not order_id:
-                        logger.error("Auto reconciliation close returned no order id: %s", symbol)
-                        continue
+                if not bool(getattr(self.config, "trading_execution_enabled", False)):
+                    logger.warning("⏸️ Reconciliation close is enabled but exchange execution is disabled: %s", symbol)
+                    continue
+
+                live_direction = self._exchange_position_direction(position)
+                local_direction = str(trade.get("direction") or "").strip().upper()
+                local_direction = {"BUY": "LONG", "SELL": "SHORT"}.get(local_direction, local_direction)
+                if not live_direction or local_direction not in {"LONG", "SHORT"}:
                     self.state_manager.save_trade_state({
                         **trade,
-                        "closing_order_id": order_id,
-                        "reconciliation_note": "reduce-only close submitted; awaiting exchange fill confirmation",
+                        "reconciliation_note": "position direction missing or unknown; automatic close withheld",
                     })
-
-                fill = await self.exchange.fetch_fill_details(order_id, symbol)
-                if fill.price <= 0 or fill.quantity <= 0:
-                    logger.warning("⏳ Reconciliation close fill not confirmed yet: {} {}", symbol, order_id)
+                    logger.critical("🛑 Position direction is incomplete; withholding automatic close for %s", symbol)
                     continue
-                # A previously submitted reduce-only order may fill only part
-                # of the position. Re-read exposure before closing the local
-                # record; otherwise a half-close can be falsely reported as
-                # a fully reconciled trade.
+                if live_direction != local_direction:
+                    self.state_manager.save_trade_state({
+                        **trade,
+                        "reconciliation_note": (
+                            f"position direction mismatch (local={local_direction}, exchange={live_direction}); "
+                            "automatic close withheld"
+                        ),
+                    })
+                    logger.critical("🛑 Direction mismatch; withholding automatic close for %s", symbol)
+                    continue
+
+                orders = self.state_manager.get_reconciliation_close_orders(trade_id)
+                if orders is None:
+                    logger.error("❌ Cannot read close-order ledger; withholding automatic close for %s", symbol)
+                    continue
+                latest_order = orders[0] if orders else None
+                if latest_order:
+                    status = str(latest_order.get("status") or "unknown").lower().replace("-", "_")
+                    order_id = str(latest_order.get("exchange_order_id") or "")
+                    client_order_id = str(latest_order.get("client_order_id") or "")
+                    if status in {"submitted", "partially_filled", "unknown", "needs_reconciliation"}:
+                        if order_id or client_order_id:
+                            exchange_order = await self.exchange.fetch_order_for_reconciliation(
+                                symbol,
+                                order_id=order_id or None,
+                                client_order_id=client_order_id or None,
+                            )
+                            if exchange_order is None:
+                                self.state_manager.update_trade_order(
+                                    int(latest_order["id"]),
+                                    {"status": "canceled", "raw_payload": {"reason": "Binance confirms order absent"}},
+                                )
+                            else:
+                                order_id = str(exchange_order.get("id") or exchange_order.get("orderId") or order_id)
+                                status = str(exchange_order.get("status") or "unknown").lower().replace("-", "_")
+                                self.state_manager.update_trade_order(
+                                    int(latest_order["id"]),
+                                    {
+                                        "status": status,
+                                        "exchange_order_id": order_id or None,
+                                        "raw_payload": exchange_order,
+                                    },
+                                )
+                                if status in {"open", "new", "pending", "submitted", "partially_filled", "unknown"}:
+                                    self.state_manager.save_trade_state({
+                                        **trade,
+                                        "closing_order_id": order_id or None,
+                                        "reconciliation_note": "reduce-only close intent is still pending at Binance",
+                                    })
+                                    continue
+                                if status in {"closed", "filled"} and order_id:
+                                    prior_fill = await self.exchange.fetch_fill_details(order_id, symbol)
+                                    await persist_confirmed_fill(
+                                        trade, int(latest_order["id"]), order_id, prior_fill
+                                    )
+                        else:
+                            # Compatibility for historical unknown order rows that predate client IDs.
+                            if await self.exchange.has_open_reduce_only_market_order(symbol):
+                                continue
+                            submitted_at = latest_order.get("submitted_at")
+                            if submitted_at:
+                                try:
+                                    submitted = datetime.fromisoformat(str(submitted_at).replace("Z", "+00:00"))
+                                    if (datetime.now(timezone.utc) - submitted).total_seconds() < 60:
+                                        continue
+                                except (TypeError, ValueError):
+                                    continue
+                    elif status in {"open", "new", "pending", "partially_filled"}:
+                        continue
+                    if status in {"closed", "filled", "canceled", "expired"} and order_id:
+                        prior_fill = await self.exchange.fetch_fill_details(order_id, symbol)
+                        if prior_fill and prior_fill.is_pnl_eligible:
+                            await persist_confirmed_fill(
+                                trade, int(latest_order["id"]), order_id, prior_fill
+                            )
+
+                # The first snapshot may have changed while the prior order
+                # was being looked up. Never submit from stale exposure data.
+                fresh_positions = await self.exchange.get_all_open_positions_result()
+                if not fresh_positions.ok:
+                    logger.error("❌ Live position recheck failed; no close submitted for %s", symbol)
+                    continue
+                position = next(
+                    (
+                        candidate for candidate in fresh_positions.data
+                        if str(candidate.get("symbol") or "") == symbol
+                        and self._exchange_position_quantity(candidate) > 0
+                    ),
+                    None,
+                )
+                if position is None:
+                    if self.state_manager.mark_reconciliation_flat(
+                        trade,
+                        "Binance confirms zero exposure before retry; no unverified PnL was recorded",
+                    ):
+                        release_slot(trade)
+                        await self.exchange.cancel_protection_orders(symbol)
+                    continue
+                live_direction = self._exchange_position_direction(position)
+                if not live_direction or (local_direction and live_direction != local_direction):
+                    logger.critical("🛑 Live direction changed or became unknown; withholding close for %s", symbol)
+                    continue
+                quantity = self._exchange_position_quantity(position)
+                if quantity <= 0:
+                    continue
+                intent_key = hashlib.sha256(f"{trade_id}:{symbol}".encode("utf-8")).hexdigest()[:12]
+                client_order_id = f"apex-r-{intent_key}-{uuid.uuid4().hex[:8]}"[:36]
+                exit_side = "sell" if live_direction == "LONG" else "buy"
+                ledger_order_id = self.state_manager.record_trade_order({
+                    "trade_id": trade_id,
+                    "exchange": self.config.exchange.primary_exchange(),
+                    "symbol": symbol,
+                    "side": exit_side,
+                    "order_type": "market",
+                    "status": "submitted",
+                    "client_order_id": client_order_id,
+                    "requested_quantity": quantity,
+                    "reduce_only": True,
+                    "raw_payload": {"reason": "auto_reconciliation_reduce_only", "intent_persisted_before_submit": True},
+                })
+                if ledger_order_id is None:
+                    logger.critical("🛑 Could not persist close intent; no order sent for %s", symbol)
+                    continue
+
+                try:
+                    order = await self.exchange.reduce_only_close(
+                        symbol=symbol,
+                        amount=quantity,
+                        reason="auto_reconciliation_reduce_only",
+                        client_order_id=client_order_id,
+                    )
+                except Exception as exc:
+                    self.state_manager.update_trade_order(
+                        ledger_order_id,
+                        {"status": "unknown", "raw_payload": {"error": str(exc)[:500]}},
+                    )
+                    self.state_manager.save_trade_state({
+                        **trade,
+                        "reconciliation_note": "reduce-only order outcome is uncertain; checking the persisted client ID on the next cycle",
+                    })
+                    logger.error("❌ Auto reconciliation order outcome uncertain for %s: %s", symbol, exc)
+                    continue
+
+                order_id = str(order.get("id") or order.get("orderId") or "")
+                order_status = str(order.get("status") or "submitted").lower().replace("-", "_")
+                if not order_id:
+                    try:
+                        found = await self.exchange.fetch_order_for_reconciliation(
+                            symbol, client_order_id=client_order_id
+                        )
+                        if found:
+                            order_id = str(found.get("id") or found.get("orderId") or "")
+                            order_status = str(found.get("status") or order_status).lower().replace("-", "_")
+                            order = {**order, **found}
+                    except Exception as exc:
+                        logger.warning("Order lookup by client ID pending for %s: %s", symbol, exc)
+
+                ledger_updated = self.state_manager.update_trade_order(
+                    ledger_order_id,
+                    {
+                        "status": order_status,
+                        "exchange_order_id": order_id or None,
+                        "raw_payload": order,
+                    },
+                )
+                self.state_manager.save_trade_state({
+                    **trade,
+                    "closing_order_id": order_id or None,
+                    "reconciliation_note": (
+                        "reduce-only order submitted; awaiting Binance position and fill confirmation"
+                    ),
+                })
+                if not ledger_updated:
+                    logger.critical("🛑 Exchange order sent but ledger update failed for %s", symbol)
+
+                fill = await self.exchange.fetch_fill_details(order_id, symbol) if order_id else None
+                fill_saved = await persist_confirmed_fill(
+                    trade, ledger_order_id, order_id, fill
+                ) if fill and fill.is_pnl_eligible else False
                 latest_positions = await self.exchange.get_all_open_positions_result()
                 if not latest_positions.ok:
-                    logger.error("❌ Cannot confirm residual exposure after fill: {}", symbol)
+                    logger.error("❌ Cannot confirm residual exposure after close for %s", symbol)
                     continue
                 residual = next(
                     (
-                        position for position in latest_positions.data
-                        if str(position.get("symbol") or "") == symbol
-                        and abs(float(position.get("contracts") or position.get("positionAmt") or 0)) > 0
+                        candidate for candidate in latest_positions.data
+                        if str(candidate.get("symbol") or "") == symbol
+                        and self._exchange_position_quantity(candidate) > 0
                     ),
                     None,
                 )
                 if residual is not None:
-                    residual_quantity = abs(float(
-                        residual.get("contracts") or residual.get("positionAmt") or 0
-                    ))
+                    residual_quantity = self._exchange_position_quantity(residual)
                     self.state_manager.save_trade_state({
                         **trade,
                         "remaining_quantity": residual_quantity,
-                        "closing_order_id": None,
-                        "reconciliation_note": (
-                            "reduce-only close partially filled; residual exposure remains; "
-                            "a new idempotent close is allowed"
-                        ),
+                        "closing_order_id": order_id or None,
+                        "reconciliation_note": "reduce-only close completed or partially filled; residual exposure remains and will be rechecked automatically",
                     })
-                    logger.warning(
-                        "⏳ Partial reconciliation fill for {}: residual quantity {}",
-                        symbol,
-                        residual_quantity,
+                    logger.warning("⏳ Residual Testnet exposure for %s: %s", symbol, residual_quantity)
+                    continue
+
+                closed = False
+                if ledger_updated and fill_saved and fill and fill.is_pnl_eligible:
+                    closed = self.state_manager.mark_reconciliation_closed(
+                        trade,
+                        order_id=order_id,
+                        fill=fill,
+                        close_reason="auto_reconciliation_reduce_only",
+                    )
+                if closed:
+                    release_slot(trade)
+                    await self.exchange.cancel_protection_orders(symbol)
+                    await self.telegram.send_reconciliation_closed(
+                        symbol=symbol,
+                        order_id=order_id,
+                        price=fill.price,
+                        quantity=fill.quantity,
+                        fee=fill.fee,
                     )
                     continue
-                if not self.state_manager.mark_reconciliation_closed(
+
+                if self.state_manager.mark_reconciliation_flat(
                     trade,
-                    order_id=order_id,
-                    fill=fill,
-                    close_reason="auto_reconciliation_reduce_only",
+                    "Binance confirms zero exposure after reduce-only reconciliation; accounting remains unconfirmed",
                 ):
-                    continue
-                await self.telegram.send_reconciliation_closed(
-                    symbol=symbol,
-                    order_id=order_id,
-                    price=fill.price,
-                    quantity=fill.quantity,
-                    fee=fill.fee,
-                )
+                    release_slot(trade)
+                    await self.exchange.cancel_protection_orders(symbol)
+                    logger.warning("✅ Auto-resolved flat exposure for %s without fabricated PnL", symbol)
             except Exception as exc:
-                logger.error("❌ Auto reconciliation close failed for {}: {}", symbol, exc)
+                logger.error("❌ Auto reconciliation close failed for %s: %s", symbol, exc)
 
     async def _notify_reconciliation_required(self) -> None:
         """Notify once per persisted unresolved-state snapshot; never mutate positions."""
@@ -465,7 +761,7 @@ class ApexTraderBot:
         except (TypeError, ValueError):
             return False
         if not symbol or entry_price <= 0 or contracts <= 0:
-            logger.error("❌ Cannot persist orphan {} without entry price and quantity", symbol)
+            logger.error("❌ Cannot persist orphan %s without entry price and quantity", symbol)
             return False
         direction = "SHORT" if str(position.get("side") or "").lower() in {"short", "sell"} else "LONG"
         slot_trade_id = str((slot or {}).get("trade_id") or "")
@@ -547,6 +843,13 @@ class ApexTraderBot:
     async def process_market_cycle(self) -> None:
         logger.info(f"Market cycle: {datetime.now(timezone.utc).isoformat()}")
         await self._roll_risk_day_if_needed()
+        try:
+            reconciled = await self._reconcile_before_trading(fail_closed=False)
+        except Exception as exc:
+            logger.error("❌ Periodic reconciliation failed; skipping trading cycle: %s", exc)
+            return
+        if not reconciled:
+            return
 
         if self.config.trading.auto_symbol_scan:
             now = time.time()
@@ -558,7 +861,7 @@ class ApexTraderBot:
                 )
                 if scanned:
                     self.config.trading.symbols = scanned
-                    logger.info("🔎 رموز المسح الحجمي الحالية: {}", ", ".join(scanned))
+                    logger.info("🔎 رموز المسح الحجمي الحالية: %s", ", ".join(scanned))
                 self._last_symbol_scan_at = now
 
         cycle_errors: list[str] = []
@@ -576,7 +879,7 @@ class ApexTraderBot:
             try:
                 # 1. جلب البيانات
                 if symbol in self._reconciliation_blocked_symbols:
-                    logger.critical("🛑 %s محجوب حتى إتمام المصالحة اليدوية", symbol)
+                    logger.critical("🛑 %s محجوب حتى اكتمال المصالحة الآلية والتحقق من Binance", symbol)
                     continue
                 candles = await self.market_data.get_ohlcv(
                     symbol, self.config.trading.timeframe, limit=300
@@ -791,6 +1094,7 @@ class ApexTraderBot:
                                 "🛑 إغلاق {} بلا Fill مؤكد؛ لن يُحتسب PnL وسيحتاج إلى مصالحة.",
                                 symbol,
                             )
+                            self._reconciliation_blocked_symbols.add(symbol)
                             self.state_manager.save_trade_state({
                                 **pos,
                                 "status": "NEEDS_RECONCILIATION",
@@ -931,6 +1235,10 @@ class ApexTraderBot:
                         self.state_manager.release_position_slot(
                             trade_id=str(pos.get("entry_order_id") or pos_obj.id)
                         )
+
+                if symbol in self._reconciliation_blocked_symbols:
+                    logger.critical("🛑 %s remains blocked until exchange reconciliation completes", symbol)
+                    continue
 
                 # ✅ إصلاح خلل حرج (مؤكَّد): تفعيل فعلي لحد الخسارة اليومي —
                 # لم يكن موجوداً في أي مكان بالكود سابقاً رغم حساب الحد.
@@ -1588,7 +1896,7 @@ if __name__ == "__main__":
         except KeyboardInterrupt:
             _logger.info("⛔ توقف يدوياً")
         except Exception as e:
-            _logger.error("❌ خطأ fatal: {}", e, exc_info=True)
+            _logger.error("❌ خطأ fatal: %s", e, exc_info=True)
             raise
 
     asyncio.run(_main())

@@ -3,6 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from bot.config import Config
 from bot.core.exchange import ExchangeManager, ExchangeSafetyError
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -130,6 +131,99 @@ async def test_binance_protection_uses_algo_order_api():
         assert params["triggerPrice"] in {90000.0, 80000.0}
 
 
+@pytest.mark.asyncio
+async def test_reduce_only_close_uses_live_side_and_caps_to_exchange_quantity():
+    class FakeExchange:
+        def __init__(self, position):
+            self.position = position
+            self.created = []
+
+        async def fetch_positions(self, symbols):
+            return [self.position]
+
+        def market(self, symbol):
+            return {"id": "BTCUSDT", "limits": {"amount": {"min": 0.001}}}
+
+        def amount_to_precision(self, symbol, amount):
+            return f"{amount:.3f}"
+
+        async def create_order(self, **kwargs):
+            self.created.append(kwargs)
+            return {"id": "close-1"}
+
+    manager = object.__new__(ExchangeManager)
+    manager._markets_loaded = True
+    manager._execution_enabled = True
+    manager._exchange = FakeExchange({
+        "symbol": "BTC/USDT",
+        "side": "long",
+        "contracts": 1.25,
+        "info": {"positionAmt": "1.25"},
+    })
+
+    await manager.reduce_only_close("BTC/USDT", amount=5.0, client_order_id="apex-r-test")
+
+    sent = manager._exchange.created[0]
+    assert sent["side"] == "sell"
+    assert sent["amount"] == 1.25
+    assert sent["params"] == {"reduceOnly": True, "newClientOrderId": "apex-r-test"}
+
+
+@pytest.mark.asyncio
+async def test_reduce_only_close_uses_signed_position_amt_for_short_side():
+    class FakeExchange:
+        async def fetch_positions(self, symbols):
+            return [{
+                "symbol": "BTC/USDT",
+                "contracts": 0.75,
+                "info": {"positionAmt": "-0.75"},
+            }]
+
+        def market(self, symbol):
+            return {"id": "BTCUSDT", "limits": {"amount": {"min": 0.001}}}
+
+        def amount_to_precision(self, symbol, amount):
+            return f"{amount:.3f}"
+
+        async def create_order(self, **kwargs):
+            self.created = kwargs
+            return {"id": "close-short"}
+
+    manager = object.__new__(ExchangeManager)
+    manager._markets_loaded = True
+    manager._execution_enabled = True
+    manager._exchange = FakeExchange()
+
+    await manager.reduce_only_close("BTC/USDT", amount=0.75)
+
+    assert manager._exchange.created["side"] == "buy"
+    assert manager._exchange.created["params"]["reduceOnly"] is True
+
+
+@pytest.mark.asyncio
+async def test_reconciliation_order_lookup_uses_original_client_order_id():
+    class FakeExchange:
+        def market(self, symbol):
+            return {"id": "BTCUSDT"}
+
+        async def request(self, path, api, method, params):
+            assert (path, api, method) == ("order", "fapiPrivate", "GET")
+            assert params["symbol"] == "BTCUSDT"
+            assert params["origClientOrderId"] == "apex-r-test"
+            return {"orderId": 123, "clientOrderId": "apex-r-test", "status": "NEW"}
+
+    manager = object.__new__(ExchangeManager)
+    manager._markets_loaded = True
+    manager._exchange = FakeExchange()
+
+    order = await manager.fetch_order_for_reconciliation(
+        "BTC/USDT", client_order_id="apex-r-test"
+    )
+
+    assert order["id"] == "123"
+    assert order["status"] == "open"
+
+
 def test_workflow_has_no_schedule_or_live_secret():
     workflow = (ROOT / ".github/workflows/binance.yml").read_text()
     assert "\n  schedule:" not in workflow
@@ -173,7 +267,33 @@ def test_botkeep_owns_scheduled_execution_and_github_fallback_is_manual():
     assert 'UNIVERSE_SIZE: "3"' in universe
 
 
-def test_auto_reconcile_close_defaults_to_disabled():
-    config = (ROOT / "bot/config.py").read_text()
-    assert '"AUTO_RECONCILE_CLOSE_ENABLED", False' in config
-    assert '"AUTO_RECONCILE_CLOSE_LIVE", False' in config
+def test_auto_reconcile_close_defaults_to_testnet_only(monkeypatch):
+    monkeypatch.delenv("AUTO_RECONCILE_CLOSE_ENABLED", raising=False)
+    monkeypatch.delenv("AUTO_RECONCILE_CLOSE_LIVE", raising=False)
+    monkeypatch.delenv("ENVIRONMENT", raising=False)
+    assert Config().auto_reconcile_close_enabled is True
+    assert Config().auto_reconcile_close_live is False
+
+    monkeypatch.setenv("ENVIRONMENT", "live")
+    assert Config().auto_reconcile_close_enabled is False
+
+
+@pytest.mark.asyncio
+async def test_open_position_query_falls_back_to_binance_position_amt():
+    class FakeExchange:
+        async def fetch_positions(self):
+            return [{
+                "symbol": "BTC/USDT",
+                "contracts": "0",
+                "info": {"positionAmt": "-0.5", "positionSide": "BOTH"},
+            }]
+
+    manager = object.__new__(ExchangeManager)
+    manager._markets_loaded = True
+    manager._exchange = FakeExchange()
+
+    result = await manager.get_all_open_positions_result()
+
+    assert result.ok is True
+    assert len(result.data) == 1
+    assert result.data[0]["info"]["positionAmt"] == "-0.5"

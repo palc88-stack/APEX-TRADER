@@ -105,6 +105,24 @@ class ExchangeManager:
         return parsed if math.isfinite(parsed) and parsed > 0 else None
 
     @staticmethod
+    def _position_quantity(position: Dict[str, Any]) -> float:
+        info = position.get("info") or {}
+        for raw in (
+            position.get("contracts"),
+            position.get("positionAmt"),
+            info.get("positionAmt"),
+        ):
+            if raw is None or raw == "":
+                continue
+            try:
+                quantity = abs(float(raw))
+            except (TypeError, ValueError):
+                continue
+            if math.isfinite(quantity) and quantity > 0:
+                return quantity
+        return 0.0
+
+    @staticmethod
     def _finite_positive(value: Any, field: str) -> float:
         try:
             result = float(value)
@@ -118,6 +136,8 @@ class ExchangeManager:
         exchange = await self._ensure_ready()
         market = exchange.market(symbol)
         formatted = float(exchange.amount_to_precision(symbol, amount))
+        if not math.isfinite(formatted) or formatted <= 0:
+            raise ExchangeSafetyError(f"amount rounds to a non-positive value for {symbol}")
         minimum = (market.get("limits", {}).get("amount", {}) or {}).get("min")
         if minimum is not None and formatted < float(minimum):
             raise ExchangeSafetyError(f"amount {formatted} is below minimum {minimum} for {symbol}")
@@ -286,13 +306,76 @@ class ExchangeManager:
             trigger_price=trigger_price,
         )
 
+    async def fetch_order_for_reconciliation(
+        self,
+        symbol: str,
+        *,
+        order_id: Optional[str] = None,
+        client_order_id: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Fetch a known order intent; return None only when Binance says absent."""
+        exchange = await self._ensure_ready()
+        try:
+            if order_id:
+                return await exchange.fetch_order(str(order_id), symbol)
+            if not client_order_id:
+                return None
+            market_id = str(exchange.market(symbol)["id"])
+            raw = await exchange.request(
+                "order",
+                "fapiPrivate",
+                "GET",
+                {"symbol": market_id, "origClientOrderId": str(client_order_id)},
+            )
+            status = str(raw.get("status") or "").lower()
+            status_map = {
+                "new": "open",
+                "partially_filled": "partially_filled",
+                "filled": "closed",
+                "canceled": "canceled",
+                "expired": "expired",
+                "rejected": "rejected",
+            }
+            return {
+                **raw,
+                "id": str(raw.get("orderId") or raw.get("id") or ""),
+                "clientOrderId": str(raw.get("clientOrderId") or client_order_id),
+                "status": status_map.get(status, status or "unknown"),
+                "filled": float(raw.get("executedQty") or raw.get("filled") or 0.0),
+                "average": float(raw.get("avgPrice") or raw.get("average") or 0.0),
+            }
+        except ccxt.OrderNotFound:
+            return None
+        except Exception as exc:
+            # Binance's -2013 is the only generic exchange response interpreted
+            # as a confirmed absence. Network/auth failures remain unresolved.
+            if "-2013" in str(exc) or "order does not exist" in str(exc).lower():
+                return None
+            raise
+
+    async def has_open_reduce_only_market_order(self, symbol: str) -> bool:
+        """Check legacy close intents that predate persisted client order IDs."""
+        exchange = await self._ensure_ready()
+        orders = await exchange.fetch_open_orders(symbol)
+
+        def truthy(value: Any) -> bool:
+            return value is True or str(value).strip().lower() in {"1", "true", "yes"}
+
+        for order in orders or []:
+            info = order.get("info") or {}
+            order_type = str(order.get("type") or info.get("type") or "").lower()
+            reduce_only = order.get("reduceOnly", info.get("reduceOnly"))
+            if order_type in {"market", "market_close"} and truthy(reduce_only):
+                return True
+        return False
+
     async def get_all_open_positions_result(self) -> QueryResult:
         """Distinguish an empty account from a failed position query."""
         try:
             exchange = await self._ensure_ready()
             positions = await exchange.fetch_positions()
             open_positions = [
-                p for p in positions if abs(float(p.get("contracts") or 0)) > 0
+                position for position in positions if self._position_quantity(position) > 0
             ]
             return QueryResult.from_items(open_positions)
         except Exception as exc:
@@ -496,16 +579,52 @@ class ExchangeManager:
             "protection_order_ids": sorted(protections),
         }
 
-    async def reduce_only_close(self, symbol: str, amount: float, reason: str = "manual") -> Dict[str, Any]:
+    async def reduce_only_close(
+        self,
+        symbol: str,
+        amount: float,
+        reason: str = "manual",
+        client_order_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
         self._assert_execution_allowed("reduce_only_close")
         exchange = await self._ensure_ready()
-        amount = await self._format_amount(symbol, self._finite_positive(amount, "amount"))
         positions = await exchange.fetch_positions([symbol])
-        position = next((p for p in positions if p.get("symbol") == symbol and abs(float(p.get("contracts") or 0)) > 0), None)
+        position = next((
+            p for p in positions
+            if p.get("symbol") == symbol
+            and self._position_quantity(p) > 0
+        ), None)
         if position is None:
             return {}
-        side = "sell" if position.get("side") == "long" else "buy"
-        order = await exchange.create_order(symbol=symbol, type="market", side=side, amount=amount, params={"reduceOnly": True})
+        info = position.get("info") or {}
+        raw_position_amount = position.get("positionAmt") or info.get("positionAmt") or 0
+        position_amount = self._position_quantity(position)
+        if position_amount <= 0:
+            return {}
+
+        position_side = str(position.get("side") or "").strip().lower()
+        if position_side not in {"long", "short"}:
+            try:
+                signed_amount = float(raw_position_amount)
+            except (TypeError, ValueError):
+                signed_amount = 0.0
+            position_side = "long" if signed_amount > 0 else "short" if signed_amount < 0 else ""
+        if position_side not in {"long", "short"}:
+            raise ExchangeSafetyError("cannot determine exchange position direction for reduce-only close")
+
+        requested_amount = self._finite_positive(amount, "amount")
+        amount = await self._format_amount(symbol, min(requested_amount, position_amount))
+        side = "sell" if position_side == "long" else "buy"
+        params: Dict[str, Any] = {"reduceOnly": True}
+        if client_order_id:
+            params["newClientOrderId"] = str(client_order_id)[:36]
+        order = await exchange.create_order(
+            symbol=symbol,
+            type="market",
+            side=side,
+            amount=amount,
+            params=params,
+        )
         logger.info("reduce-only close {} {} reason={}", symbol, amount, reason)
         return order or {}
 
@@ -531,6 +650,10 @@ class ExchangeManager:
                     )
                 except Exception as exc:
                     logger.warning("Unable to cancel algo order {} for {}: {}", algo_id, symbol, exc)
+
+    async def cancel_protection_orders(self, symbol: str) -> None:
+        """Public wrapper for canceling stale protective orders after flat confirmation."""
+        await self._cancel_protection_orders(symbol)
 
     async def close_position(self, symbol: str, position_id: str, reason: str, price: float) -> Dict[str, Any]:
         self._assert_execution_allowed("close_position")

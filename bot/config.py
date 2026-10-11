@@ -213,7 +213,10 @@ class Config:
         default_factory=lambda: _env_bool("ALLOW_NEW_ENTRIES", False)
     )
     auto_reconcile_close_enabled: bool = field(
-        default_factory=lambda: _env_bool("AUTO_RECONCILE_CLOSE_ENABLED", False)
+        default_factory=lambda: _env_bool(
+            "AUTO_RECONCILE_CLOSE_ENABLED",
+            _env_text("ENVIRONMENT", "testnet").strip().lower() == "testnet",
+        )
     )
     auto_reconcile_close_live: bool = field(
         default_factory=lambda: _env_bool("AUTO_RECONCILE_CLOSE_LIVE", False)
