@@ -4,15 +4,139 @@
 
 const JSON_HEADERS = { "content-type": "application/json; charset=utf-8" };
 const DEFAULT_BINANCE_BASE = "https://testnet.binancefuture.com";
+const RECONCILIATION_LEASE = "apex-trading-reconciliation";
+const BINANCE_ERROR_BODY_LIMIT = 2048;
+const HEALTH_TIMEOUT_MS = 5000;
 
-function json(data, status = 200) {
-  return new Response(JSON.stringify(data), { status, headers: JSON_HEADERS });
+function json(data, status = 200, headers = {}) {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { ...JSON_HEADERS, ...headers },
+  });
 }
 
 function requireSecret(env, name) {
   const value = env[name];
   if (!value) throw new Error(`missing Worker secret: ${name}`);
   return value;
+}
+
+function getBinanceBase(env) {
+  const base = String(env.BINANCE_BASE_URL || DEFAULT_BINANCE_BASE).replace(/\/$/, "");
+  if (base !== DEFAULT_BINANCE_BASE && env.ALLOW_LIVE_CRON !== "true") {
+    throw new Error("non-Testnet Binance endpoint is disabled");
+  }
+  return base;
+}
+
+async function checkDependency(name, task) {
+  const startedAt = Date.now();
+  try {
+    await task();
+    return { status: "ok", latency_ms: Date.now() - startedAt };
+  } catch (error) {
+    console.error(JSON.stringify({
+      event: "health_dependency_error",
+      dependency: name,
+      error_name: error?.name || "Error",
+      error: safeErrorMessage(error),
+      timestamp: new Date().toISOString(),
+    }));
+    return { status: "error", latency_ms: Date.now() - startedAt };
+  }
+}
+
+async function healthResponse(env) {
+  const signal = AbortSignal.timeout(HEALTH_TIMEOUT_MS);
+  const [supabase, binance] = await Promise.all([
+    checkDependency("supabase", () => supabaseRequest(
+      env,
+      "bot_state?select=id&limit=1",
+      { signal },
+    )),
+    checkDependency("binance_testnet", () => binancePublic(
+      "/fapi/v1/ping",
+      {},
+      DEFAULT_BINANCE_BASE,
+    )),
+  ]);
+  const healthy = supabase.status === "ok" && binance.status === "ok";
+  return json({
+    service: "apex-trader-dashboard",
+    worker: "ok",
+    scheduler: "cron-enabled",
+    status: healthy ? "ok" : "degraded",
+    checked_at: new Date().toISOString(),
+    testnet_only: true,
+    checks: { worker: { status: "ok" }, supabase, binance_testnet: binance },
+  }, healthy ? 200 : 503, { "cache-control": "no-store" });
+}
+
+function redactDiagnosticText(value) {
+  return String(value || "")
+    .replace(/("(?:authorization|api[_-]?key|token|secret|signature)"\s*:\s*")[^"]*(")/gi, "$1[redacted]$2")
+    .replace(/(authorization|api[_-]?key|token|secret|signature)(\s*[:=]\s*)["']?[^\s,"'&}]+/gi, "$1$2[redacted]")
+    .replace(/bot\d{5,}:[A-Za-z0-9_-]{20,}/g, "[redacted Telegram token]")
+    .replace(/(https?:\/\/[^?\s"']+)\?[^\s"']+/gi, "$1?[redacted]");
+}
+
+async function readResponseSnippet(response, maxBytes = BINANCE_ERROR_BODY_LIMIT) {
+  if (!response.body) return { body: "", truncated: false };
+  const reader = response.body.getReader();
+  const chunks = [];
+  let size = 0;
+  let truncated = false;
+  try {
+    while (size <= maxBytes) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const remaining = maxBytes - size;
+      if (value.byteLength > remaining) {
+        chunks.push(value.slice(0, Math.max(0, remaining)));
+        size += Math.max(0, remaining);
+        truncated = true;
+        await reader.cancel();
+        break;
+      }
+      chunks.push(value);
+      size += value.byteLength;
+      if (size === maxBytes) {
+        truncated = true;
+        await reader.cancel();
+        break;
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const bytes = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return { body: redactDiagnosticText(new TextDecoder().decode(bytes)), truncated };
+}
+
+function logBinanceHttpError(path, response, snippet, requestUrl) {
+  console.error(JSON.stringify({
+    event: "binance_http_error",
+    endpoint: path,
+    status: response.status,
+    request_host: new URL(requestUrl).host,
+    response_headers: {
+      content_type: response.headers.get("content-type"),
+      retry_after: response.headers.get("retry-after"),
+      server: response.headers.get("server"),
+      cf_ray: response.headers.get("cf-ray"),
+      used_weight_1m: response.headers.get("x-mbx-used-weight-1m"),
+      order_count_10s: response.headers.get("x-mbx-order-count-10s"),
+      date: response.headers.get("date"),
+    },
+    response_body: snippet.body,
+    body_truncated: snippet.truncated,
+    timestamp: new Date().toISOString(),
+  }));
 }
 
 async function hmacSha256(secret, message) {
@@ -24,12 +148,31 @@ async function hmacSha256(secret, message) {
   return [...new Uint8Array(signature)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-async function binancePublic(path, params = {}) {
+async function binancePublic(path, params = {}, base = DEFAULT_BINANCE_BASE) {
   const query = new URLSearchParams(params).toString();
-  const response = await fetch(`${DEFAULT_BINANCE_BASE}${path}${query ? `?${query}` : ""}`, {
-    headers: { "user-agent": "apex-trader-cloudflare-cron" },
-  });
-  if (!response.ok) throw new Error(`Binance public ${path} returned ${response.status}`);
+  const requestUrl = `${base}${path}${query ? `?${query}` : ""}`;
+  let response;
+  try {
+    response = await fetch(requestUrl, {
+      headers: { "user-agent": "apex-trader-cloudflare-cron" },
+      signal: AbortSignal.timeout(HEALTH_TIMEOUT_MS),
+    });
+  } catch (error) {
+    console.error(JSON.stringify({
+      event: "binance_network_error",
+      endpoint: path,
+      request_host: new URL(requestUrl).host,
+      error_name: error?.name || "Error",
+      error: redactDiagnosticText(error?.message || String(error)),
+      timestamp: new Date().toISOString(),
+    }));
+    throw new Error(`Binance public ${path} network request failed`);
+  }
+  if (!response.ok) {
+    const snippet = await readResponseSnippet(response);
+    logBinanceHttpError(path, response, snippet, requestUrl);
+    throw new Error(`Binance public ${path} returned ${response.status}`);
+  }
   return response.json();
 }
 
@@ -47,10 +190,15 @@ async function binanceSigned(path, env, params = {}) {
   if (base !== DEFAULT_BINANCE_BASE && env.ALLOW_LIVE_CRON !== "true") {
     throw new Error("live Binance Cron is disabled; set ALLOW_LIVE_CRON=true only after approval");
   }
-  const response = await fetch(`${base}${path}?${query}&signature=${signature}`, {
+  const requestUrl = `${base}${path}?${query}&signature=${signature}`;
+  const response = await fetch(requestUrl, {
     headers: { "X-MBX-APIKEY": apiKey, "user-agent": "apex-trader-cloudflare-cron" },
   });
-  if (!response.ok) throw new Error(`Binance signed ${path} returned ${response.status}: ${(await response.text()).slice(0, 160)}`);
+  if (!response.ok) {
+    const snippet = await readResponseSnippet(response);
+    logBinanceHttpError(path, response, snippet, requestUrl);
+    throw new Error(`Binance signed ${path} returned ${response.status}`);
+  }
   return response.json();
 }
 
@@ -70,6 +218,7 @@ async function supabaseRequest(env, tableOrPath, options = {}) {
       Prefer: options.prefer || "return=representation",
     },
     body: options.body ? JSON.stringify(options.body) : undefined,
+    signal: options.signal,
   });
   if (!response.ok) throw new Error(`Supabase ${path} returned ${response.status}: ${(await response.text()).slice(0, 160)}`);
   const text = await response.text();
@@ -151,6 +300,138 @@ async function getUnresolvedTrades(env) {
   );
 }
 
+async function updateReconciliationRun(env, runId, fields) {
+  await supabaseRequest(env, `reconciliation_runs?id=eq.${encodeURIComponent(runId)}`, {
+    method: "PATCH",
+    body: fields,
+    prefer: "return=minimal",
+  });
+}
+
+function safeErrorMessage(error) {
+  return redactDiagnosticText(error?.message || String(error)).slice(0, 500);
+}
+
+async function runDailyReconciliation(env, ownerId) {
+  const startedAt = new Date();
+  const leaseName = RECONCILIATION_LEASE;
+  const created = await supabaseRequest(env, "reconciliation_runs", {
+    method: "POST",
+    body: {
+      checked_at: startedAt.toISOString(),
+      started_at: startedAt.toISOString(),
+      source: "cloudflare_cron_read_only",
+      run_status: "running",
+      lease_name: leaseName,
+      findings: [],
+    },
+    prefer: "return=representation",
+  });
+  const run = Array.isArray(created) ? created[0] : created;
+  if (!run?.id) throw new Error("reconciliation run insert did not return an id");
+
+  let acquired = false;
+  try {
+    const leaseResult = await supabaseRequest(env, "/rest/v1/rpc/acquire_execution_lease", {
+      method: "POST",
+      body: {
+        p_lease_name: leaseName,
+        p_owner_id: ownerId,
+        p_ttl_seconds: 120,
+        p_metadata: { provider: "cloudflare_worker", cron: "0 2 * * *", mode: "read_only" },
+      },
+      prefer: "return=representation",
+    });
+    acquired = leaseResult === true;
+
+    if (!acquired) {
+      const finishedAt = new Date();
+      await updateReconciliationRun(env, run.id, {
+        run_status: "skipped",
+        error_message: "reconciliation lease is already held",
+        finished_at: finishedAt.toISOString(),
+        duration_ms: finishedAt.getTime() - startedAt.getTime(),
+      });
+      console.log(JSON.stringify({
+        event: "reconciliation_skipped",
+        run_id: run.id,
+        lease_name: leaseName,
+        reason: "lease_busy",
+      }));
+      return { skipped: true, reason: "lease_busy", run_id: run.id };
+    }
+
+    const report = await reconcileDaily(env);
+    const finishedAt = new Date();
+    await updateReconciliationRun(env, run.id, {
+      checked_at: report.checked_at,
+      source: report.source,
+      db_open_count: report.db_open_count,
+      exchange_open_count: report.exchange_open_count,
+      occupied_slot_count: report.occupied_slot_count,
+      finding_count: report.finding_count,
+      findings: report.findings,
+      run_status: "completed",
+      finished_at: finishedAt.toISOString(),
+      duration_ms: finishedAt.getTime() - startedAt.getTime(),
+      error_message: null,
+    });
+
+    try {
+      if (report.findings.length) {
+        const lines = report.findings.slice(0, 12).map((item) => `• ${item}`).join("\n");
+        await telegram(env,
+          `⬡ <b>APEX TRADER - مصالحة يومية</b>\n\n` +
+          `🚨 <b>توجد حالات تحتاج مراجعة</b>\n` +
+          `المطابقات غير المحسومة: <code>${report.findings.length}</code>\n\n${lines}\n\n` +
+          `⛔ لم يتم فتح أو إغلاق أو تعديل أي أمر.`
+        );
+      } else {
+        await telegram(env,
+          `⬡ <b>APEX TRADER - مصالحة يومية</b>\n\n` +
+          `✅ لا توجد فروقات بين Supabase وBinance\n` +
+          `المراكز: <code>${report.exchange_open_count}</code> | Slots: <code>${report.occupied_slot_count}</code>\n` +
+          `🔒 الفحص قراءة فقط.`
+        );
+      }
+    } catch (error) {
+      console.error(JSON.stringify({
+        event: "reconciliation_notification_error",
+        run_id: run.id,
+        error: safeErrorMessage(error),
+      }));
+    }
+    return { ...report, run_id: run.id };
+  } catch (error) {
+    const finishedAt = new Date();
+    await updateReconciliationRun(env, run.id, {
+      run_status: "failed",
+      finding_count: 1,
+      findings: [`فشل إجراء المصالحة: ${safeErrorMessage(error)}`],
+      error_message: safeErrorMessage(error),
+      finished_at: finishedAt.toISOString(),
+      duration_ms: finishedAt.getTime() - startedAt.getTime(),
+    }).catch((updateError) => console.error(JSON.stringify({
+      event: "reconciliation_run_update_error",
+      run_id: run.id,
+      error: safeErrorMessage(updateError),
+    })));
+    throw error;
+  } finally {
+    if (acquired) {
+      await supabaseRequest(env, "/rest/v1/rpc/release_execution_lease", {
+        method: "POST",
+        body: { p_lease_name: leaseName, p_owner_id: ownerId },
+        prefer: "return=minimal",
+      }).catch((error) => console.error(JSON.stringify({
+        event: "lease_release_error",
+        lease_name: leaseName,
+        error: safeErrorMessage(error),
+      })));
+    }
+  }
+}
+
 async function reconcileDaily(env) {
   const [dbTrades, exchangePositions, slots] = await Promise.all([
     getOpenDbTrades(env),
@@ -196,31 +477,13 @@ async function reconcileDaily(env) {
     finding_count: findings.length,
     findings,
   };
-  await supabaseRequest(env, "reconciliation_runs", { method: "POST", body: report });
-
-  if (findings.length) {
-    const lines = findings.slice(0, 12).map((item) => `• ${item}`).join("\n");
-    await telegram(env,
-      `⬡ <b>APEX TRADER - مصالحة يومية</b>\n\n` +
-      `🚨 <b>توجد حالات تحتاج مراجعة</b>\n` +
-      `المطابقات غير المحسومة: <code>${findings.length}</code>\n\n${lines}\n\n` +
-      `⛔ لم يتم فتح أو إغلاق أو تعديل أي أمر.`
-    );
-  } else {
-    await telegram(env,
-      `⬡ <b>APEX TRADER - مصالحة يومية</b>\n\n` +
-      `✅ لا توجد فروقات بين Supabase وBinance\n` +
-      `المراكز: <code>${exchangeOpen.size}</code> | Slots: <code>${(slots || []).length}</code>\n` +
-      `🔒 الفحص قراءة فقط.`
-    );
-  }
   return report;
 }
 
 async function refreshUniverse(env) {
   const [exchangeInfo, tickers] = await Promise.all([
-    binancePublic("/fapi/v1/exchangeInfo"),
-    binancePublic("/fapi/v1/ticker/24hr"),
+    binancePublic("/fapi/v1/exchangeInfo", {}, getBinanceBase(env)),
+    binancePublic("/fapi/v1/ticker/24hr", {}, getBinanceBase(env)),
   ]);
   const allowed = new Set((exchangeInfo.symbols || [])
     .filter((s) => s.status === "TRADING" && s.quoteAsset === "USDT" && s.contractType === "PERPETUAL")
@@ -313,7 +576,7 @@ export default {
   async fetch(request, env) {
     if (request.method !== "GET" && request.method !== "HEAD") return json({ error: "method_not_allowed" }, 405);
     const url = new URL(request.url);
-    if (url.pathname === "/api/health") return json({ service: "apex-trader-dashboard", worker: "ok", scheduler: "cron-enabled", stage: "strategy-router", subtype_batch_size: Number(env.SUBTYPE_REPORT_BATCH_SIZE || 10), testnet_only: env.ALLOW_LIVE_CRON !== "true" });
+    if (url.pathname === "/api/health") return healthResponse(env);
     return env.ASSETS.fetch(request);
   },
 
@@ -322,7 +585,7 @@ export default {
     let task;
     const ownerId = `cloudflare:${job}:${crypto.randomUUID()}`;
     if (job === "0 2 * * *") {
-      task = withExecutionLease(env, "apex-trading-execution", ownerId, () => reconcileDaily(env));
+      task = runDailyReconciliation(env, ownerId);
     } else if (job === "0 */4 * * *") {
       task = withExecutionLease(env, "apex-universe-refresh", ownerId, () => refreshUniverse(env));
     }
